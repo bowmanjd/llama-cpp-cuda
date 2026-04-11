@@ -7,7 +7,7 @@ echo "Loading image into podman..."
 podman load < result
 
 # The tag is defined in the flake
-TAG="ghcr.io/bowmanjd/llama-cpp-cuda:b8744-cuda13"
+TAG="ghcr.io/bowmanjd/llama-cpp-cuda:b8762-cuda13"
 
 echo "Pushing image to GHCR with podman..."
 podman push "$TAG"

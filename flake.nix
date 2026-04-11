@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/cfa1f3da48ac9533e0114e90f20c0219612672a7";
     llama-cpp = {
-      url = "github:ggml-org/llama.cpp/b8744";
+      url = "github:ggml-org/llama.cpp/b8762";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -101,7 +101,7 @@ print("llguidance block replaced successfully")
               base = pkgs.callPackage "${llama-cpp}/.devops/nix/package.nix" {
                 inherit cudaPackages;
                 useCuda = true;
-                llamaVersion = "b8744";
+                llamaVersion = "b8762";
               };
             in
             withLlguidance (withHttps (base.overrideAttrs (old: {
@@ -127,7 +127,7 @@ print("llguidance block replaced successfully")
 
           docker-image = pkgs.dockerTools.buildLayeredImage {
             name = "ghcr.io/bowmanjd/llama-cpp-cuda";
-            tag = "b8744-cuda13";
+            tag = "b8762-cuda13";
             contents = [
               llama-cpp-cuda-slim
               pkgs.dockerTools.binSh

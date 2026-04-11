@@ -1,6 +1,6 @@
 # llama.cpp with CUDA 13
 
-This flake provides an optimized build of `llama.cpp` using CUDA 13.0 support, based on tag `b8744`.
+This flake provides an optimized build of `llama.cpp` using CUDA 13.0 support, based on tag `b8762`.
 
 It incorporates several optimizations and features used in the `caleb-nix` configuration:
 - **CUDA 13 Support**: Uses `cudaPackages_13` (13.0.2).
@@ -33,7 +33,7 @@ Load it into podman:
 podman load < result
 ```
 
-The image is tagged as `ghcr.io/bowmanjd/llama-cpp-cuda:b8744-cuda13`.
+The image is tagged as `ghcr.io/bowmanjd/llama-cpp-cuda:b8762-cuda13`.
 
 ## Publishing to GHCR
 

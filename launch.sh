@@ -5,4 +5,4 @@ podman run -d \
   -p 8000:8000 \
   -v ~/.cache/huggingface:/cache \
   -e HF_CACHE_PATH=/cache \
-  ghcr.io/bowmanjd/llama-cpp-cuda:b8744-cuda13
+  ghcr.io/bowmanjd/llama-cpp-cuda:b8762-cuda13
