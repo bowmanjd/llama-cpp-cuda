@@ -115,14 +115,97 @@ print("llguidance block replaced successfully")
               ];
             })));
 
-          # Slim version for container: only server and libraries
-          # Note: CUDA runtime libraries (libcuda.so, libcublas.so, etc.) are NOT included
-          # and must be provided by the host (e.g. via nvidia-container-toolkit)
-          llama-cpp-cuda-slim = pkgs.runCommand "llama-cpp-cuda-slim" { } ''
+          # Slim version for container: server, backend plugins, and runtime deps only
+          # Bundles all needed shared libs and rewrites RPATHs to break nix store references
+          # Note: libcuda.so.1 (the driver API) is NOT included and must be provided by the host
+          llama-cpp-cuda-slim =
+            let
+              glibc = pkgs.glibc;
+              gcc-lib = pkgs.stdenv.cc.cc.lib;
+              gcc-libgcc = pkgs.gccForLibs.lib;
+              libidn2 = pkgs.libidn2.out;
+              libunistring = pkgs.libunistring.out;
+              openssl = pkgs.openssl.out;
+              oniguruma = pkgs.oniguruma.lib;
+              cudart = cudaPackages.cuda_cudart;
+              cublas = cudaPackages.libcublas.lib;
+            in
+            pkgs.runCommand "llama-cpp-cuda-slim" {
+              nativeBuildInputs = [ pkgs.patchelf pkgs.removeReferencesTo pkgs.python3 ];
+            } ''
             mkdir -p $out/bin $out/lib
+
+            # Copy llama-server and backend plugins
             cp ${llama-cpp-cuda}/bin/llama-server $out/bin/
-            # Collect all shared libraries from bin and lib
-            find ${llama-cpp-cuda} -name "*.so*" -exec cp -P {} $out/lib/ \;
+            cp -P ${llama-cpp-cuda}/bin/*.so $out/bin/ 2>/dev/null || true
+            cp -P ${llama-cpp-cuda}/lib/*.so* $out/lib/
+
+            # Copy only the runtime shared libraries we actually need
+            # glibc core
+            for lib in libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 ld-linux-x86-64.so.2; do
+              cp -n ${glibc}/lib/$lib $out/lib/ 2>/dev/null || true
+            done
+            # gcc runtime (only libstdc++, libgcc_s, libgomp)
+            for lib in libstdc++.so.6 libgcc_s.so.1 libgomp.so.1; do
+              cp -n ${gcc-lib}/lib/$lib $out/lib/ 2>/dev/null || true
+            done
+            # openssl
+            cp -P ${openssl}/lib/libssl.so* $out/lib/
+            cp -P ${openssl}/lib/libcrypto.so* $out/lib/
+            # oniguruma
+            cp -P ${oniguruma}/lib/libonig.so* $out/lib/
+            # CUDA runtime libs (bundled so nvidia-container-toolkit isn't needed for these)
+            cp -P ${cudart}/lib/libcudart.so* $out/lib/
+            cp -P ${cublas}/lib/libcublas.so* $out/lib/
+            cp -P ${cublas}/lib/libcublasLt.so* $out/lib/
+
+            # Make everything writable for patchelf
+            chmod -R u+w $out
+
+            # Rewrite all RPATHs to $out/lib only, and remove all nix store references
+            for f in $out/bin/llama-server $out/bin/*.so $out/lib/*.so*; do
+              if [ -f "$f" ] && ! [ -L "$f" ]; then
+                patchelf --set-rpath "$out/lib" "$f" 2>/dev/null || true
+                remove-references-to -t ${llama-cpp-cuda} "$f"
+                remove-references-to -t ${glibc} "$f"
+                remove-references-to -t ${gcc-lib} "$f"
+                remove-references-to -t ${openssl} "$f"
+                remove-references-to -t ${oniguruma} "$f"
+                remove-references-to -t ${cudart} "$f"
+                remove-references-to -t ${cublas} "$f"
+                remove-references-to -t ${gcc-libgcc} "$f"
+                remove-references-to -t ${libidn2} "$f"
+                remove-references-to -t ${libunistring} "$f"
+              fi
+            done
+
+            # Scrub any remaining /nix/store references from all files
+            # (catches glibc's embedded xgcc-libgcc reference in ld-linux)
+            own_hash=$(basename $out | cut -c1-32)
+            python3 -c "
+import os, re, sys
+own_hash = sys.argv[1].encode()
+root = sys.argv[2]
+pattern = re.compile(rb'/nix/store/([a-z0-9]{32})-')
+for dirpath, _, filenames in os.walk(root):
+    for fn in filenames:
+        fp = os.path.join(dirpath, fn)
+        if os.path.islink(fp):
+            continue
+        with open(fp, 'rb') as f:
+            data = f.read()
+        new_data = data
+        for m in set(pattern.findall(data)):
+            if m != own_hash and m != b'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee':
+                new_data = new_data.replace(m, b'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+        if new_data != data:
+            with open(fp, 'wb') as f:
+                f.write(new_data)
+            print(f'Scrubbed references in {fp}')
+" "$own_hash" "$out"
+
+            # Set the ELF interpreter to our bundled ld-linux
+            patchelf --set-interpreter $out/lib/ld-linux-x86-64.so.2 $out/bin/llama-server
           '';
 
           docker-image = pkgs.dockerTools.buildLayeredImage {
@@ -130,7 +213,6 @@ print("llguidance block replaced successfully")
             tag = "b8762-cuda13";
             contents = [
               llama-cpp-cuda-slim
-              pkgs.dockerTools.binSh
               pkgs.dockerTools.caCertificates
             ];
             config = {
