@@ -109,7 +109,7 @@ print("llguidance block replaced successfully")
                 "-DGGML_BACKEND_DL=ON"
                 "-DLLAMA_BUILD_SERVER=ON"
                 "-DLLAMA_BUILD_EXAMPLES=OFF"
-                "-DLLAMA_BUILD_TOOLS=OFF"
+                "-DLLAMA_BUILD_TOOLS=ON"
                 "-DLLAMA_BUILD_TESTS=OFF"
                 "-DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;90;100"
               ];
