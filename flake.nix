@@ -162,10 +162,19 @@ print("llguidance block replaced successfully")
             # Make everything writable for patchelf
             chmod -R u+w $out
 
-            # Rewrite all RPATHs to $out/lib only, and remove all nix store references
+            # Rewrite RPATHs to /lib (the container root path) and strip nix store refs.
+            # glibc core files must not be touched by patchelf or remove-references-to;
+            # patchelf corrupts ld-linux (segfault), and zeroing internal refs breaks libc.
+            glibc_skip="ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1"
             for f in $out/bin/llama-server $out/bin/*.so $out/lib/*.so*; do
               if [ -f "$f" ] && ! [ -L "$f" ]; then
-                patchelf --set-rpath "$out/lib" "$f" 2>/dev/null || true
+                basename_f=$(basename "$f")
+                is_glibc=false
+                for s in $glibc_skip; do
+                  if [ "$basename_f" = "$s" ]; then is_glibc=true; break; fi
+                done
+                if [ "$is_glibc" = "true" ]; then continue; fi
+                patchelf --set-rpath "/lib" "$f" 2>/dev/null || true
                 remove-references-to -t ${llama-cpp-cuda} "$f"
                 remove-references-to -t ${glibc} "$f"
                 remove-references-to -t ${gcc-lib} "$f"
@@ -179,16 +188,22 @@ print("llguidance block replaced successfully")
               fi
             done
 
-            # Scrub any remaining /nix/store references from all files
-            # (catches glibc's embedded xgcc-libgcc reference in ld-linux)
+            # Scrub remaining /nix/store references from binaries, but skip
+            # glibc core (ld-linux, libc, libm, libdl, libpthread, librt) which
+            # segfault if their internal paths are corrupted
             own_hash=$(basename $out | cut -c1-32)
             python3 -c "
 import os, re, sys
 own_hash = sys.argv[1].encode()
 root = sys.argv[2]
+# glibc internals that must not be scrubbed
+skip = {b'ld-linux-x86-64.so.2', b'libc.so.6', b'libm.so.6',
+        b'libdl.so.2', b'libpthread.so.0', b'librt.so.1'}
 pattern = re.compile(rb'/nix/store/([a-z0-9]{32})-')
 for dirpath, _, filenames in os.walk(root):
     for fn in filenames:
+        if fn.encode() in skip:
+            continue
         fp = os.path.join(dirpath, fn)
         if os.path.islink(fp):
             continue
@@ -204,8 +219,8 @@ for dirpath, _, filenames in os.walk(root):
             print(f'Scrubbed references in {fp}')
 " "$own_hash" "$out"
 
-            # Set the ELF interpreter to our bundled ld-linux
-            patchelf --set-interpreter $out/lib/ld-linux-x86-64.so.2 $out/bin/llama-server
+            # Set the ELF interpreter to /lib (container root), not $out/lib
+            patchelf --set-interpreter /lib/ld-linux-x86-64.so.2 $out/bin/llama-server
           '';
 
           docker-image = pkgs.dockerTools.buildLayeredImage {
