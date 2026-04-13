@@ -1,5 +1,5 @@
 {
-  "llamaCppTag": "b8770",
-  "cudaVersion": "13",
+  "llamaCppTag": "b8775",
+  "cudaVersion": "13.0",
   "cudaPkgAttr": "cudaPackages_13_0"
 }

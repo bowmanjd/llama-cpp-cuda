@@ -2,10 +2,10 @@
   description = "llama.cpp with CUDA support and optimized features";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/cfa1f3da48ac9533e0114e90f20c0219612672a7";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     llama-cpp = {
       # NOTE: Keep this URL in sync with llamaCppTag in config.json
-      url = "github:ggml-org/llama.cpp/b8762";
+      url = "github:ggml-org/llama.cpp/b8775";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

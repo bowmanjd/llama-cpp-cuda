@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 # Read version config from the single source of truth (config.json)
 LLAMA_TAG=$(jq -r '.llamaCppTag' ./config.json)
@@ -7,6 +8,15 @@ TAG="ghcr.io/bowmanjd/llama-cpp-cuda:${LLAMA_TAG}-cuda${CUDA_VER}"
 
 echo "Building container image with Nix..."
 nix build .#container
+
+echo "Cleaning up previous images and dangling layers..."
+# Remove all images matching the repo name to save space
+IMAGES=$(podman images -q ghcr.io/bowmanjd/llama-cpp-cuda)
+if [ -n "$IMAGES" ]; then
+    podman rmi -f $IMAGES 2>/dev/null || true
+fi
+# Also prune dangling images (often created by the 'podman commit' dating step)
+podman image prune -f
 
 echo "Loading image into podman..."
 podman load < result

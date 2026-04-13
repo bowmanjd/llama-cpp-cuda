@@ -4,12 +4,9 @@ This repository provides a standalone Nix flake for building an OCI container wi
 
 ## Core Architectural Principles
 
-1.  Strict Nix Pinning: we pin `nixpkgs` to a specific commit in the flake rather than using unstable, to have control. Don't change this unless directed by the user.
+1.  Strict Nix Pinning: we pin `nixpkgs` to the stable branch in the flake. This ensures stability while allowing updates via `nix flake update`. Don't change the branch unless directed by the user.
 2.  Upstream Alignment: We track a specific `llama.cpp` tag in the flake. Don't change this unless directed by the user.
-3.  Static Integration of llguidance:
-       `llguidance` is built as a Rust `staticlib`.
-       When linking `llguidance` into `llama-server`, you must also link its transitive dependencies: `onig` (oniguruma), `ssl`, and `crypto` (OpenSSL).
-       The `sed` patch in `flake.nix` is the source of truth for this injection.
+3.  Static Integration of llguidance: `llguidance` is built as a Rust `staticlib`.
 
 ## Research & Reference Repositories
 
