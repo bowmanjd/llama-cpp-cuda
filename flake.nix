@@ -142,7 +142,7 @@ print("llguidance block replaced successfully")
 
             # Copy only the runtime shared libraries we actually need
             # glibc core
-            for lib in libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 ld-linux-x86-64.so.2; do
+            for lib in libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 ld-linux-x86-64.so.2 libnss_dns.so.2 libnss_files.so.2 libresolv.so.2; do
               cp -n ${glibc}/lib/$lib $out/lib/ 2>/dev/null || true
             done
             # gcc runtime (only libstdc++, libgcc_s, libgomp)
@@ -163,18 +163,19 @@ print("llguidance block replaced successfully")
             chmod -R u+w $out
 
             # Rewrite RPATHs to /lib (the container root path) and strip nix store refs.
-            # glibc core files must not be touched by patchelf or remove-references-to;
-            # patchelf corrupts ld-linux (segfault), and zeroing internal refs breaks libc.
-            glibc_skip="ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1"
+            # glibc core files must not be touched by patchelf because it corrupts ld-linux (segfault).
+            # We no longer skip them for remove-references-to because we DO want to strip glibc refs.
+            glibc_skip_patchelf="ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libnss_dns.so.2 libnss_files.so.2 libresolv.so.2"
             for f in $out/bin/llama-server $out/bin/*.so $out/lib/*.so*; do
               if [ -f "$f" ] && ! [ -L "$f" ]; then
                 basename_f=$(basename "$f")
-                is_glibc=false
-                for s in $glibc_skip; do
-                  if [ "$basename_f" = "$s" ]; then is_glibc=true; break; fi
+                is_glibc_patchelf=false
+                for s in $glibc_skip_patchelf; do
+                  if [ "$basename_f" = "$s" ]; then is_glibc_patchelf=true; break; fi
                 done
-                if [ "$is_glibc" = "true" ]; then continue; fi
-                patchelf --set-rpath "/lib" "$f" 2>/dev/null || true
+                if [ "$is_glibc_patchelf" != "true" ]; then
+                  patchelf --set-rpath "/lib" "$f" 2>/dev/null || true
+                fi
                 remove-references-to -t ${llama-cpp-cuda} "$f"
                 remove-references-to -t ${glibc} "$f"
                 remove-references-to -t ${gcc-lib} "$f"
@@ -188,22 +189,17 @@ print("llguidance block replaced successfully")
               fi
             done
 
-            # Scrub remaining /nix/store references from binaries, but skip
-            # glibc core (ld-linux, libc, libm, libdl, libpthread, librt) which
-            # segfault if their internal paths are corrupted
+            # Scrub remaining /nix/store references from binaries.
+            # We NO LONGER skip glibc internals because we DO want to strip glibc refs,
+            # and since we copied the NSS libraries into /lib, libc.so.6 will find them.
             own_hash=$(basename $out | cut -c1-32)
             python3 -c "
 import os, re, sys
 own_hash = sys.argv[1].encode()
 root = sys.argv[2]
-# glibc internals that must not be scrubbed
-skip = {b'ld-linux-x86-64.so.2', b'libc.so.6', b'libm.so.6',
-        b'libdl.so.2', b'libpthread.so.0', b'librt.so.1'}
 pattern = re.compile(rb'/nix/store/([a-z0-9]{32})-')
 for dirpath, _, filenames in os.walk(root):
     for fn in filenames:
-        if fn.encode() in skip:
-            continue
         fp = os.path.join(dirpath, fn)
         if os.path.islink(fp):
             continue
