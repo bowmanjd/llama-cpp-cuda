@@ -1,9 +1,10 @@
 {
-  description = "llama.cpp with CUDA 13 support and optimized features";
+  description = "llama.cpp with CUDA support and optimized features";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/cfa1f3da48ac9533e0114e90f20c0219612672a7";
     llama-cpp = {
+      # NOTE: Keep this URL in sync with llamaCppTag in config.json
       url = "github:ggml-org/llama.cpp/b8762";
       inputs.nixpkgs.follows = "nixpkgs";
     };
@@ -11,6 +12,15 @@
 
   outputs = { self, nixpkgs, llama-cpp }:
     let
+      cfg = builtins.fromJSON (builtins.readFile ./config.json);
+
+      # Validation: Ensure flake input matches config.json
+      # This helps maintain the "single source of truth" goal despite flake limitations.
+      inputTag = llama-cpp.original.ref or "unknown";
+      _ = if inputTag != cfg.llamaCppTag then
+        builtins.trace "WARNING: flake.nix input tag (${inputTag}) does not match config.json (${cfg.llamaCppTag})" null
+      else null;
+
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
     in
@@ -23,7 +33,7 @@
             config.cudaSupport = true;
           };
 
-          cudaPackages = pkgs.cudaPackages_13;
+          cudaPackages = pkgs.${cfg.cudaPkgAttr};
 
           # Build llguidance as a proper Rust package (matching caleb-nix pattern)
           llguidance = pkgs.rustPlatform.buildRustPackage rec {
@@ -101,7 +111,7 @@ print("llguidance block replaced successfully")
               base = pkgs.callPackage "${llama-cpp}/.devops/nix/package.nix" {
                 inherit cudaPackages;
                 useCuda = true;
-                llamaVersion = "b8762";
+                llamaVersion = cfg.llamaCppTag;
               };
             in
             withLlguidance (withHttps (base.overrideAttrs (old: {
@@ -221,7 +231,7 @@ for dirpath, _, filenames in os.walk(root):
 
           docker-image = pkgs.dockerTools.buildLayeredImage {
             name = "ghcr.io/bowmanjd/llama-cpp-cuda";
-            tag = "b8762-cuda13";
+            tag = "${cfg.llamaCppTag}-cuda${cfg.cudaVersion}";
             contents = [
               llama-cpp-cuda-slim
               pkgs.dockerTools.caCertificates
@@ -249,7 +259,7 @@ for dirpath, _, filenames in os.walk(root):
             config.allowUnfree = true;
             config.cudaSupport = true;
           };
-          cudaPackages = pkgs.cudaPackages_13;
+          cudaPackages = pkgs.${cfg.cudaPkgAttr};
         in
         {
           default = pkgs.mkShell {

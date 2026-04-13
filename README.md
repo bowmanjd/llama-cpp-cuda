@@ -1,17 +1,19 @@
-# llama.cpp with CUDA 13
+# llama.cpp with CUDA support
 
-This flake provides an optimized build of `llama.cpp` using CUDA 13.0 support, based on tag `b8762`.
+This flake provides an optimized build of `llama.cpp` with CUDA support.
+
+Version configuration is managed in `config.json` — update `llamaCppTag` there to track a new llama.cpp release.
 
 It incorporates several optimizations and features used in the `caleb-nix` configuration:
-- **CUDA 13 Support**: Uses `cudaPackages_13` (13.0.2).
-- **HTTPS Support**: Enabled via OpenSSL and internal httplib.
-- **LLGuidance Support**: Integrated with the pre-built Rust `llguidance` package.
-- **Multi-variant CPU support**: Built with `GGML_CPU_ALL_VARIANTS=ON` for portability.
-- **Dynamic Backend**: Built with `GGML_BACKEND_DL=ON`.
+- CUDA Support: Managed via `config.json`.
+- HTTPS Support: Enabled via OpenSSL and internal httplib.
+- LLGuidance Support: Integrated with the pre-built Rust `llguidance` package.
+- Multi-variant CPU support: Built with `GGML_CPU_ALL_VARIANTS=ON` for portability.
+- Dynamic Backend: Built with `GGML_BACKEND_DL=ON`.
 
 ## Building the Package
 
-To build the `llama-cpp` package with CUDA 13 support:
+To build the `llama-cpp` package with CUDA support:
 
 ```bash
 nix build .#llama-cpp
@@ -25,7 +27,7 @@ To build the OCI container image (optimized for GHCR):
 nix build .#container
 ```
 
-The container is configured to listen on **port 8000** by default.
+The container is configured to listen on port 8000 by default.
 
 Load it into podman:
 
@@ -33,7 +35,7 @@ Load it into podman:
 podman load < result
 ```
 
-The image is tagged as `ghcr.io/bowmanjd/llama-cpp-cuda:b8762-cuda13`.
+The image tag is derived from `config.json`, following the pattern `ghcr.io/bowmanjd/llama-cpp-cuda:<llama-tag>-cuda<version>`.
 
 ## Publishing to GHCR
 
