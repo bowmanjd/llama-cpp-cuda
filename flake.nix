@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     llama-cpp = {
       # NOTE: Keep this URL in sync with llamaCppTag in config.json
-      url = "github:ggml-org/llama.cpp/b8775";
+      url = "github:ggml-org/llama.cpp/b8783";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
