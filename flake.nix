@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     llama-cpp = {
       # NOTE: Keep this URL in sync with llamaCppTag in config.json
-      url = "github:ggml-org/llama.cpp/b8783";
+      url = "github:ggml-org/llama.cpp/b8793";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -249,35 +249,8 @@ for dirpath, _, filenames in os.walk(root):
           default = llama-cpp-cuda;
           llama-cpp = llama-cpp-cuda;
           container = docker-image;
+          python3 = pkgs.python3;
           inherit llguidance;
-        });
-
-      devShells = forAllSystems (system:
-        let
-          pkgs = import nixpkgs {
-            inherit system;
-            config.allowUnfree = true;
-            config.cudaSupport = true;
-          };
-          cudaPackages = pkgs.${cfg.cudaPkgAttr};
-        in
-        {
-          default = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              cmake
-              ninja
-              pkg-config
-              git
-              openssl
-              cudaPackages.cuda_nvcc
-              cudaPackages.cuda_cudart
-              cudaPackages.libcublas
-            ];
-            shellHook = ''
-              export CUDA_PATH=${cudaPackages.cuda_nvcc}
-              export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ cudaPackages.cuda_cudart cudaPackages.libcublas ]}:$LD_LIBRARY_PATH
-            '';
-          };
         });
     };
 }
