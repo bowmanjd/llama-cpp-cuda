@@ -234,6 +234,7 @@ for dirpath, _, filenames in os.walk(root):
             tag = "${cfg.llamaCppTag}-cuda${cfg.cudaVersion}";
             contents = [
               llama-cpp-cuda-slim
+              pkgs.python3
               pkgs.dockerTools.caCertificates
             ];
             config = {
@@ -249,7 +250,6 @@ for dirpath, _, filenames in os.walk(root):
           default = llama-cpp-cuda;
           llama-cpp = llama-cpp-cuda;
           container = docker-image;
-          python3 = pkgs.python3;
           inherit llguidance;
         });
     };
