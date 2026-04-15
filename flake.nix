@@ -312,7 +312,7 @@
           # Entrypoint removed so Modal can execute its own commands
           Env = [
             "PATH=/usr/local/bin:/usr/bin:/bin"
-            "LD_LIBRARY_PATH=/lib"
+            "LD_LIBRARY_PATH=/lib:/usr/lib64"
             "PYTHONHOME=/"
             # CRITICAL: Tell python where to find the site-packages we just copied!
             "PYTHONPATH=/lib/python3.13/site-packages"

@@ -25,7 +25,6 @@ hf_cache_volume = modal.Volume.from_name("hf_hub_llama_cpp", create_if_missing=T
 )
 @modal.web_server(port=8000, startup_timeout=600)
 def serve():
-    import os
     import subprocess
 
     cmd = [

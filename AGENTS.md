@@ -16,6 +16,18 @@ The following repositories are provided for your research and reference. Treat t
 
 See README.md for instructions on building and deploying.
 
+## GPU/CUDA in the Container
+
+The container uses `GGML_BACKEND_DL=ON`, which builds CUDA as a dynamically-loaded plugin (`libggml-cuda.so`). This has several implications:
+
+1. **Backend plugin search path**: `ggml_backend_load_all()` searches for `libggml-*.so` plugins in the **executable's directory** (via `/proc/self/exe`), NOT in the `libggml.so` directory. The plugins must be in the same directory as `llama-server` (i.e., `/bin/` in the container).
+
+2. **NVIDIA driver env vars are required**: The container image MUST set `NVIDIA_VISIBLE_DEVICES=all` and `NVIDIA_DRIVER_CAPABILITIES=compute,utility`. Without these, the nvidia-container-toolkit treats the container as non-GPU and never mounts `libcuda.so.1` into the container at all.
+
+3. **Modal puts `libcuda.so.1` at `/usr/lib64/`**: This path MUST be in `LD_LIBRARY_PATH`. The slim build's patchelf step replaces all RPATHs with `/lib`, stripping the `/run/opengl-driver/lib` that the upstream nix `autoAddDriverRunpath` hook originally set. So `LD_LIBRARY_PATH` must compensate.
+
+4. **Silent fallback**: In release builds (`NDEBUG`), if `libggml-cuda.so` fails to `dlopen` (e.g., because `libcuda.so.1` is missing), the error is completely silent and llama.cpp falls back to CPU-only. The symptom is `CPU_Mapped` in the load_tensors log instead of `CUDA0`.
+
 ## Use Case
 
 The container will be deployed on Modal. The script we are using is `serve.py`
