@@ -152,6 +152,7 @@
           with ps; [
             protobuf
             grpcio
+            grpclib
             synchronicity
             aiohttp
             certifi
@@ -184,9 +185,9 @@
           cp -P ${llama-cpp-cuda}/bin/*.so $out/bin/ 2>/dev/null || true
           cp -P ${llama-cpp-cuda}/lib/*.so* $out/lib/
 
-          # Copy python binaries from the bundled pythonEnv
-          cp ${pythonEnv}/bin/python3 $out/bin/
-          cp ${pythonEnv}/bin/python $out/bin/
+          # Copy python binaries from the pure base (Raw ELFs), avoiding the Nix wrapper script!
+          cp -L ${pythonBase}/bin/python3 $out/bin/
+          cp -L ${pythonBase}/bin/python $out/bin/
 
           cp -P ${pythonBase}/lib/libpython3.13.so* $out/lib/
 
