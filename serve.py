@@ -4,8 +4,8 @@ cuda_version = "13.0"
 llama_cpp_tag = "b8793"
 container_image = f"ghcr.io/bowmanjd/llama-cpp-cuda:{llama_cpp_tag}-cuda{cuda_version}"
 hf_hub_cache = "/hub"
-# model_id = "Jackrong/Qwopus3.5-27B-v3-GGUF:Q5_K_M"
-model_id = "Jackrong/Qwopus3.5-4B-v3-GGUF:Q5_K_M"
+model_id = "Jackrong/Qwopus3.5-27B-v3-GGUF:Q5_K_M"
+# model_id = "Jackrong/Qwopus3.5-4B-v3-GGUF:Q5_K_M"
 
 image = (
     modal.Image.from_registry(container_image)
