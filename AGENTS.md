@@ -20,7 +20,9 @@ See README.md for instructions on building and deploying.
 
 The container will be deployed on Modal. The script we are using is `serve.py`
 
-It can be launched with `MODAL_FORCE_BUILD=1 modal serve serve.py`
+We do not follow the common Modal paradigm of "injecting" Python through an additional container layer. In fact, we don't even expose `pip` for installing Python packages; instead, we follow the nix way of using nixpkgs for the python dependencies.
+
+The container can be launched on Modal with `modal serve serve.py` -- if needed, you can prefix it with `MODAL_FORCE_BUILD=1` to reload the container.
 
 You can research more about Modal at https://modal.com/llms.txt, but the following links are most relevant; read any of these that seem relevant to the task you are working on.
 

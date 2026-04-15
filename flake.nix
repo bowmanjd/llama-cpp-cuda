@@ -316,6 +316,9 @@
             "PYTHONHOME=/"
             # CRITICAL: Tell python where to find the site-packages we just copied!
             "PYTHONPATH=/lib/python3.13/site-packages"
+            # Required for nvidia-container-toolkit to mount GPU drivers into the container
+            "NVIDIA_VISIBLE_DEVICES=all"
+            "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
           ];
           ExposedPorts = {"8000/tcp" = {};};
         };

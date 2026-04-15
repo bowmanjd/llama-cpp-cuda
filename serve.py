@@ -34,6 +34,7 @@ def serve():
         "0.0.0.0",
         "--port",
         "8000",
+        "--jinja",
 		"-hf",
 		model_id
     ]
