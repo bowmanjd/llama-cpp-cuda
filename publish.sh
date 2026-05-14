@@ -1,13 +1,33 @@
 #!/bin/sh
 set -e
 
-# Read version config from the single source of truth (config.json)
+# Usage: ./publish.sh <cuda_version>
+# Example: ./publish.sh 13.0
+
+if [ -z "$1" ]; then
+    echo "Usage: $0 <cuda_version>"
+    echo "Available versions in config.json:"
+    jq -r '.cudaVersions | keys[]' ./config.json
+    exit 1
+fi
+
+CUDA_VER=$1
+# Check if version exists in config.json
+if ! jq -e ".cudaVersions[\"$CUDA_VER\"]" ./config.json > /dev/null; then
+    echo "Error: CUDA version $CUDA_VER not found in config.json"
+    exit 1
+fi
+
+# Read llama tag from config.json
 LLAMA_TAG=$(jq -r '.llamaCppTag' ./config.json)
-CUDA_VER=$(jq -r '.cudaVersion' ./config.json)
+
+# Convert 13.0 to 13-0 for nix attribute
+SLUG=$(echo "$CUDA_VER" | tr '.' '-')
+ATTR="container-$SLUG"
 TAG="ghcr.io/bowmanjd/llama-cpp-cuda:${LLAMA_TAG}-cuda${CUDA_VER}"
 
-echo "Building container image with Nix..."
-nix build .#container
+echo "Building container image for CUDA $CUDA_VER (attribute $ATTR)..."
+nix build ".#$ATTR"
 
 echo "Cleaning up previous images and dangling layers..."
 # Remove all images matching the repo name to save space

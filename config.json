@@ -1,5 +1,13 @@
 {
   "llamaCppTag": "b9133",
-  "cudaVersion": "13.0",
-  "cudaPkgAttr": "cudaPackages_13_0"
+  "cudaVersions": {
+    "13.0": {
+      "pkgAttr": "cudaPackages_13_0",
+      "architectures": "75;80;86;89;90;100"
+    },
+    "12.9": {
+      "pkgAttr": "cudaPackages_12_9",
+      "architectures": "75;80;86;89;90"
+    }
+  }
 }

@@ -11,31 +11,62 @@ It incorporates several optimizations and features:
 - Multi-variant CPU support: Built with `GGML_CPU_ALL_VARIANTS=ON` for portability.
 - Supports a generous subset of NVIDIA GPUs: see `DCMAKE_CUDA_ARCHITECTURES` in `flake.nix` and https://developer.nvidia.com/cuda/gpus
 
-## Building the Package
+## Building
 
-To build the `llama-cpp` package with CUDA support:
-
-```bash
-nix build .#llama-cpp
-```
-
-## Building the Container
-
-To build the OCI container image:
+You can build specific versions using their Nix attributes:
 
 ```bash
-nix build .#container
+# Build llama.cpp binary for CUDA 12.9
+nix build .#llama-cpp-12-9
+
+# Build container for CUDA 13.0
+nix build .#container-13-0
 ```
 
-The container is configured to listen on port 8000 by default.
+By default, `nix build .#container` or `nix build .#llama-cpp` will build the first version listed in `config.json`.
 
-Load it into podman (or use docker):
+The container is configured to listen on port 8000 by default. Load it into podman (or use docker):
 
 ```bash
 podman load < result
 ```
 
-The image tag is derived from `config.json`, following the pattern `ghcr.io/bowmanjd/llama-cpp-cuda:<llama-tag>-cuda<version>`.
+## Configuration
+
+Versions and build options are managed in `config.json`:
+
+```json
+{
+  "llamaCppTag": "b9133",
+  "cudaVersions": {
+    "13.0": {
+      "pkgAttr": "cudaPackages_13_0",
+      "architectures": "75;80;86;89;90;100"
+    },
+    "12.9": {
+      "pkgAttr": "cudaPackages_12_9",
+      "architectures": "75;80;86;89;90"
+    }
+  }
+}
+```
+
+- `llamaCppTag`: The `llama.cpp` tag/branch to build.
+- `cudaVersions`: A map of CUDA versions to their configuration.
+  - `pkgAttr`: The Nixpkgs attribute for the CUDA package set.
+  - `architectures`: Semi-colon separated list of CUDA architectures to target (e.g., `80` for A100, `89` for L4/L40S).
+
+## Building
+
+You can build specific versions using their Nix attributes:
+
+```bash
+# Build llama.cpp binary for CUDA 12.9
+nix build .#llama-cpp-12-9
+
+# Build container for CUDA 13.0
+nix build .#container-13-0
+```
 
 ## Publishing to GHCR
 
@@ -45,9 +76,9 @@ Ensure you are logged into GHCR first:
 echo $classic_github_container_token | podman login ghcr.io -u USERNAME --password-stdin
 ```
 
-Use the provided `publish.sh` script (requires `podman`):
+Use the provided `publish.sh` script with the desired CUDA version (requires `podman`):
 
 ```bash
-./publish.sh
+./publish.sh 13.0
 ```
 

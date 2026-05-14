@@ -5,11 +5,11 @@
         "nixpkgs-lib": "nixpkgs-lib"
       },
       "locked": {
-        "lastModified": 1730504689,
-        "narHash": "sha256-hgmguH29K2fvs9szpq2r3pz2/8cJd2LPS+b4tfNFCwE=",
+        "lastModified": 1777988971,
+        "narHash": "sha256-qIoWPDs+0/8JecyYgE3gpKQxW/4bLW/gp45vow9ioCQ=",
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "506278e768c2a08bec68eb62932193e341f55c90",
+        "rev": "0678d8986be1661af6bb555f3489f2fdfc31f6ff",
         "type": "github"
       },
       "original": {
@@ -26,16 +26,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1776172665,
-        "narHash": "sha256-9baaufmrS7+xken5veWa0V9oI1QSRNVKmySs0FM/z9s=",
+        "lastModified": 1778663391,
+        "narHash": "sha256-++cLvW+KDtvd1EWmxWc3luipVZfigGeikAZVQBcMg0o=",
         "owner": "ggml-org",
         "repo": "llama.cpp",
-        "rev": "1f30ac0ceac0e2b4400069d81857089b6e04872a",
+        "rev": "5d44db60089b0381cdbf7c45ce9ded43fc0c7f4c",
         "type": "github"
       },
       "original": {
         "owner": "ggml-org",
-        "ref": "b8793",
+        "ref": "b9133",
         "repo": "llama.cpp",
         "type": "github"
       }
@@ -58,14 +58,17 @@
     },
     "nixpkgs-lib": {
       "locked": {
-        "lastModified": 1730504152,
-        "narHash": "sha256-lXvH/vOfb4aGYyvFmZK/HlsNsr/0CVWlwYvo2rxJk3s=",
-        "type": "tarball",
-        "url": "https://github.com/NixOS/nixpkgs/archive/cc2f28000298e1269cea6612cd06ec9979dd5d7f.tar.gz"
+        "lastModified": 1777168982,
+        "narHash": "sha256-GOkGPcboWE9BmGCRMLX3worL4EMnsnG8MyKmXNeYuhQ=",
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "rev": "f5901329dade4a6ea039af1433fb087bd9c1fe14",
+        "type": "github"
       },
       "original": {
-        "type": "tarball",
-        "url": "https://github.com/NixOS/nixpkgs/archive/cc2f28000298e1269cea6612cd06ec9979dd5d7f.tar.gz"
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "type": "github"
       }
     },
     "root": {

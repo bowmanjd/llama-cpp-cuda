@@ -27,6 +27,9 @@
 
     supportedSystems = ["x86_64-linux" "aarch64-linux"];
     forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+
+    # Helper to convert version string like "13.0" to attribute-safe slug "13-0"
+    toSlug = v: builtins.replaceStrings ["."] ["-"] v;
   in {
     packages = forAllSystems (system: let
       pkgs = import nixpkgs {
@@ -34,8 +37,6 @@
         config.allowUnfree = true;
         config.cudaSupport = true;
       };
-
-      cudaPackages = pkgs.${cfg.cudaPkgAttr};
 
       # Build llguidance as a proper Rust package
       llguidance = pkgs.rustPlatform.buildRustPackage rec {
@@ -59,8 +60,13 @@
         doCheck = false;
       };
 
-      # ---> HERE is where llama-cpp-cuda is defined <---
-      llama-cpp-cuda = let
+      makeLlamaPackages = {
+        cudaVersion,
+        cudaPkgAttr,
+        architectures,
+      }: let
+        cudaPackages = pkgs.${cudaPkgAttr};
+
         # Helper to enable HTTPS support
         withHttps = pkg:
           pkg.overrideAttrs (old: {
@@ -79,256 +85,288 @@
             postPatch =
               (old.postPatch or "")
               + ''
-                python3 -c '
+                python3 -c "
                 import re, sys
 
-                replacement = """
+                replacement = \"\"\"
                 if (LLAMA_LLGUIDANCE)
-                    target_compile_definitions(''${TARGET} PUBLIC LLAMA_USE_LLGUIDANCE)
+                    target_compile_definitions(\''${TARGET} PUBLIC LLAMA_USE_LLGUIDANCE)
                     add_library(llguidance STATIC IMPORTED)
                     set_target_properties(llguidance PROPERTIES
                         IMPORTED_LOCATION ${llguidance}/lib/libllguidance.a)
-                    target_include_directories(''${TARGET} PRIVATE ${llguidance}/include)
-                    target_link_libraries(''${TARGET} PRIVATE llguidance onig ssl crypto)
+                    target_include_directories(\''${TARGET} PRIVATE ${llguidance}/include)
+                    target_link_libraries(\''${TARGET} PRIVATE llguidance onig ssl crypto)
                     if (WIN32)
-                        target_link_libraries(''${TARGET} PRIVATE ws2_32 userenv ntdll bcrypt)
+                        target_link_libraries(\''${TARGET} PRIVATE ws2_32 userenv ntdll bcrypt)
                     endif()
                 endif()
-                """
+                \"\"\"
 
-                path = "common/CMakeLists.txt"
+                path = \"common/CMakeLists.txt\"
                 text = open(path).read()
 
-                pattern = r"if \(LLAMA_LLGUIDANCE\).*?^endif\(\)$"
+                pattern = r\"if \(LLAMA_LLGUIDANCE\).*?^endif\(\)$\"
                 new_text, count = re.subn(pattern, replacement.strip(), text,
                                            flags=re.DOTALL | re.MULTILINE)
 
                 if count != 1:
-                    print(f"ERROR: expected 1 replacement, got {count}", file=sys.stderr)
+                    print(f\"ERROR: expected 1 replacement, got {count}\", file=sys.stderr)
                     sys.exit(1)
 
-                open(path, "w").write(new_text)
-                print("llguidance block replaced successfully")
-                '
+                open(path, \"w\").write(new_text)
+                print(\"llguidance block replaced successfully\")
+                "
               '';
           });
 
-        base = pkgs.callPackage "${llama-cpp}/.devops/nix/package.nix" {
-          inherit cudaPackages;
-          useCuda = true;
-          llamaVersion = cfg.llamaCppTag;
-        };
-      in
-        withLlguidance (withHttps (base.overrideAttrs (old: {
-          cmakeFlags =
-            (old.cmakeFlags or [])
-            ++ [
-              "-DGGML_BACKEND_DL=ON"
-              "-DLLAMA_BUILD_SERVER=ON"
-              "-DLLAMA_BUILD_EXAMPLES=OFF"
-              "-DLLAMA_BUILD_TOOLS=ON"
-              "-DLLAMA_BUILD_TESTS=OFF"
-              "-DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;90;100"
-            ];
-        })));
+        llama-cpp-cuda = let
+          base = pkgs.callPackage "${llama-cpp}/.devops/nix/package.nix" {
+            inherit cudaPackages;
+            useCuda = true;
+            llamaVersion = cfg.llamaCppTag;
+          };
+        in
+          withLlguidance (withHttps (base.overrideAttrs (old: {
+            cmakeFlags =
+              (old.cmakeFlags or [])
+              ++ [
+                "-DGGML_BACKEND_DL=ON"
+                "-DLLAMA_BUILD_SERVER=ON"
+                "-DLLAMA_BUILD_EXAMPLES=OFF"
+                "-DLLAMA_BUILD_TOOLS=ON"
+                "-DLLAMA_BUILD_TESTS=OFF"
+                "-DCMAKE_CUDA_ARCHITECTURES=${architectures}"
+              ];
+          })));
 
-      # Slim version for container: server, backend plugins, and runtime deps only
-      llama-cpp-cuda-slim = let
-        glibc = pkgs.glibc;
-        gcc-lib = pkgs.stdenv.cc.cc.lib;
-        gcc-libgcc = pkgs.gccForLibs.lib;
-        libidn2 = pkgs.libidn2.out;
-        libunistring = pkgs.libunistring.out;
-        openssl = pkgs.openssl.out;
-        oniguruma = pkgs.oniguruma.lib;
-        cudart = cudaPackages.cuda_cudart;
-        cublas = cudaPackages.libcublas.lib;
+        # Slim version for container: server, backend plugins, and runtime deps only
+        llama-cpp-cuda-slim = let
+          glibc = pkgs.glibc;
+          gcc-lib = pkgs.stdenv.cc.cc.lib;
+          gcc-libgcc = pkgs.gccForLibs.lib;
+          libidn2 = pkgs.libidn2.out;
+          libunistring = pkgs.libunistring.out;
+          openssl = pkgs.openssl.out;
+          oniguruma = pkgs.oniguruma.lib;
+          cudart = cudaPackages.cuda_cudart;
+          cublas = cudaPackages.libcublas.lib;
 
-        # 1. Base Python for standard library and shared objects
-        pythonBase = pkgs.python3;
+          # 1. Base Python for standard library and shared objects
+          pythonBase = pkgs.python3;
 
-        # 2. Python environment populated with all Modal client dependencies natively via Nix
-        pythonEnv = pkgs.python3.withPackages (ps:
-          with ps; [
-            protobuf
-            grpcio
-            grpclib
-            synchronicity
-            aiohttp
-            certifi
-            click
-            toml
-            typer
-            fastapi
-            watchfiles
-            rich
-          ]);
+          # 2. Python environment populated with all Modal client dependencies natively via Nix
+          pythonEnv = pkgs.python3.withPackages (ps:
+            with ps; [
+              protobuf
+              grpcio
+              grpclib
+              synchronicity
+              aiohttp
+              certifi
+              click
+              toml
+              typer
+              fastapi
+              watchfiles
+              rich
+            ]);
 
-        zlib = pkgs.zlib.out;
-        ncurses = pkgs.ncurses.out;
-        libffi = pkgs.libffi.out;
-        expat = pkgs.expat.out;
-        mpdecimal = pkgs.mpdecimal.out;
-        sqlite = pkgs.sqlite.out;
-        readline = pkgs.readline.out;
-        bzip2 = pkgs.bzip2.out;
-        xz = pkgs.xz.out;
-        util-linux = pkgs.util-linuxMinimal.lib;
-      in
-        pkgs.runCommand "llama-cpp-cuda-slim" {
-          nativeBuildInputs = [pkgs.patchelf pkgs.removeReferencesTo pythonBase];
-        } ''
-          mkdir -p $out/bin $out/lib
+          zlib = pkgs.zlib.out;
+          ncurses = pkgs.ncurses.out;
+          libffi = pkgs.libffi.out;
+          expat = pkgs.expat.out;
+          mpdecimal = pkgs.mpdecimal.out;
+          sqlite = pkgs.sqlite.out;
+          readline = pkgs.readline.out;
+          bzip2 = pkgs.bzip2.out;
+          xz = pkgs.xz.out;
+          util-linux = pkgs.util-linuxMinimal.lib;
+        in
+          pkgs.runCommand "llama-cpp-cuda-slim-cuda${toSlug cudaVersion}" {
+            nativeBuildInputs = [pkgs.patchelf pkgs.removeReferencesTo pythonBase];
+          } ''
+            mkdir -p $out/bin $out/lib
 
-          # Copy llama-server and backend plugins
-          cp ${llama-cpp-cuda}/bin/llama-server $out/bin/
-          cp -P ${llama-cpp-cuda}/bin/*.so $out/bin/ 2>/dev/null || true
-          cp -P ${llama-cpp-cuda}/lib/*.so* $out/lib/
+            # Copy llama-server and backend plugins
+            cp ${llama-cpp-cuda}/bin/llama-server $out/bin/
+            cp -P ${llama-cpp-cuda}/bin/*.so $out/bin/ 2>/dev/null || true
+            cp -P ${llama-cpp-cuda}/lib/*.so* $out/lib/
 
-          # Copy python binaries from the pure base (Raw ELFs), avoiding the Nix wrapper script!
-          cp -L ${pythonBase}/bin/python3 $out/bin/
-          cp -L ${pythonBase}/bin/python $out/bin/
+            # Copy python binaries from the pure base (Raw ELFs), avoiding the Nix wrapper script!
+            cp -L ${pythonBase}/bin/python3 $out/bin/
+            cp -L ${pythonBase}/bin/python $out/bin/
 
-          cp -P ${pythonBase}/lib/libpython3.13.so* $out/lib/
+            cp -P ${pythonBase}/lib/libpython3.13.so* $out/lib/
 
-          # Copy python standard library
-          mkdir -p $out/lib/python3.13
-          cp -a ${pythonBase}/lib/python3.13/* $out/lib/python3.13/
-          chmod -R u+w $out/lib/python3.13
+            # Copy python standard library
+            mkdir -p $out/lib/python3.13
+            cp -a ${pythonBase}/lib/python3.13/* $out/lib/python3.13/
+            chmod -R u+w $out/lib/python3.13
 
-          # Layer the pythonEnv site-packages over the top
-          # Use -RL to follow symlinks but NOT preserve the read-only permission from the store
-          cp -RL ${pythonEnv}/lib/python3.13/site-packages/. $out/lib/python3.13/site-packages/
-          chmod -R u+w $out/lib/python3.13
+            # Layer the pythonEnv site-packages over the top
+            # Use -RL to follow symlinks but NOT preserve the read-only permission from the store
+            cp -RL ${pythonEnv}/lib/python3.13/site-packages/. $out/lib/python3.13/site-packages/
+            chmod -R u+w $out/lib/python3.13
 
-          rm -rf $out/lib/python3.13/test
-          find $out/lib/python3.13 -name "__pycache__" -type d -exec rm -rf {} +
+            rm -rf $out/lib/python3.13/test
+            find $out/lib/python3.13 -name "__pycache__" -type d -exec rm -rf {} +
 
-          # Copy only the runtime shared libraries we actually need
-          for lib in libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 ld-linux-x86-64.so.2 libnss_dns.so.2 libnss_files.so.2 libresolv.so.2; do
-            cp -n ${glibc}/lib/$lib $out/lib/ 2>/dev/null || true
-          done
-          for lib in libstdc++.so.6 libgcc_s.so.1 libgomp.so.1; do
-            cp -n ${gcc-lib}/lib/$lib $out/lib/ 2>/dev/null || true
-          done
-          cp -P ${openssl}/lib/libssl.so* $out/lib/
-          cp -P ${openssl}/lib/libcrypto.so* $out/lib/
-          cp -P ${oniguruma}/lib/libonig.so* $out/lib/
-          cp -P ${cudart}/lib/libcudart.so* $out/lib/
-          cp -P ${cublas}/lib/libcublas.so* $out/lib/
-          cp -P ${cublas}/lib/libcublasLt.so* $out/lib/
-
-          # Additional Python dependencies
-          cp -P ${zlib}/lib/libz.so* $out/lib/
-          cp -P ${ncurses}/lib/libncursesw.so* $out/lib/
-          cp -P ${libffi}/lib/libffi.so* $out/lib/
-          cp -P ${expat}/lib/libexpat.so* $out/lib/
-          cp -P ${mpdecimal}/lib/libmpdec.so* $out/lib/
-          cp -P ${sqlite}/lib/libsqlite3.so* $out/lib/
-          cp -P ${readline}/lib/libreadline.so* $out/lib/
-          cp -P ${bzip2}/lib/libbz2.so* $out/lib/
-          cp -P ${xz}/lib/liblzma.so* $out/lib/
-          cp -P ${util-linux}/lib/libuuid.so* $out/lib/
-
-          # Make everything writable for patchelf
-          chmod -R u+w $out
-
-          glibc_skip_patchelf="ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libnss_dns.so.2 libnss_files.so.2 libresolv.so.2"
-
-          find $out/bin $out/lib -type f -exec file {} + | grep "ELF" | cut -d: -f1 | while read f; do
-            basename_f=$(basename "$f")
-            is_glibc_patchelf=false
-            for s in $glibc_skip_patchelf; do
-              if [ "$basename_f" = "$s" ]; then is_glibc_patchelf=true; break; fi
+            # Copy only the runtime shared libraries we actually need
+            for lib in libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 ld-linux-x86-64.so.2 libnss_dns.so.2 libnss_files.so.2 libresolv.so.2; do
+              cp -n ${glibc}/lib/$lib $out/lib/ 2>/dev/null || true
             done
-            if [ "$is_glibc_patchelf" != "true" ]; then
-              patchelf --set-rpath "/lib" "$f" 2>/dev/null || true
-            fi
-
-            # Remove references to all known store paths
-            for store_path in ${llama-cpp-cuda} ${glibc} ${gcc-lib} ${openssl} ${oniguruma} \
-                             ${cudart} ${cublas} ${gcc-libgcc} ${libidn2} ${libunistring} \
-                             ${pythonBase} ${pythonEnv} ${zlib} ${ncurses} ${libffi} ${expat} ${mpdecimal} \
-                             ${sqlite} ${readline} ${bzip2} ${xz} ${util-linux}; do
-              remove-references-to -t "$store_path" "$f"
+            for lib in libstdc++.so.6 libgcc_s.so.1 libgomp.so.1; do
+              cp -n ${gcc-lib}/lib/$lib $out/lib/ 2>/dev/null || true
             done
-          done
+            cp -P ${openssl}/lib/libssl.so* $out/lib/
+            cp -P ${openssl}/lib/libcrypto.so* $out/lib/
+            cp -P ${oniguruma}/lib/libonig.so* $out/lib/
+            cp -P ${cudart}/lib/libcudart.so* $out/lib/
+            cp -P ${cublas}/lib/libcublas.so* $out/lib/
+            cp -P ${cublas}/lib/libcublasLt.so* $out/lib/
 
-          # Scrub remaining /nix/store references from binaries.
-          own_hash=$(basename $out | cut -c1-32)
-          ${pythonBase}/bin/python3 -c "
-          import os, re, sys
-          own_hash = sys.argv[1].encode()
-          root = sys.argv[2]
-          pattern = re.compile(rb'/nix/store/([a-z0-9]{32})-')
-          for dirpath, _, filenames in os.walk(root):
-              for fn in filenames:
-                  fp = os.path.join(dirpath, fn)
-                  if os.path.islink(fp):
-                      continue
-                  try:
-                      with open(fp, 'rb') as f:
-                          data = f.read()
-                      new_data = data
-                      for m in set(pattern.findall(data)):
-                          if m != own_hash and m != b'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee':
-                              new_data = new_data.replace(m, b'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
-                      if new_data != data:
-                          with open(fp, 'wb') as f:
-                              f.write(new_data)
-                          print(f'Scrubbed references in {fp}')
-                  except Exception as e:
-                      print(f'Error scrubbing {fp}: {e}')
-          " "$own_hash" "$out"
+            # Additional Python dependencies
+            cp -P ${zlib}/lib/libz.so* $out/lib/
+            cp -P ${ncurses}/lib/libncursesw.so* $out/lib/
+            cp -P ${libffi}/lib/libffi.so* $out/lib/
+            cp -P ${expat}/lib/libexpat.so* $out/lib/
+            cp -P ${mpdecimal}/lib/libmpdec.so* $out/lib/
+            cp -P ${sqlite}/lib/libsqlite3.so* $out/lib/
+            cp -P ${readline}/lib/libreadline.so* $out/lib/
+            cp -P ${bzip2}/lib/libbz2.so* $out/lib/
+            cp -P ${xz}/lib/liblzma.so* $out/lib/
+            cp -P ${util-linux}/lib/libuuid.so* $out/lib/
 
-          # Set the ELF interpreter to /lib (container root)
-          patchelf --set-interpreter /lib/ld-linux-x86-64.so.2 $out/bin/llama-server
-          patchelf --set-interpreter /lib/ld-linux-x86-64.so.2 $out/bin/python3
-          patchelf --set-interpreter /lib/ld-linux-x86-64.so.2 $out/bin/python
-        '';
+            # Make everything writable for patchelf
+            chmod -R u+w $out
 
-      docker-image = pkgs.dockerTools.buildLayeredImage {
-        name = "ghcr.io/bowmanjd/llama-cpp-cuda";
-        tag = "${cfg.llamaCppTag}-cuda${cfg.cudaVersion}";
-        contents = [
-          llama-cpp-cuda-slim
-          pkgs.dockerTools.caCertificates
-          pkgs.busybox
-        ];
+            glibc_skip_patchelf="ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libnss_dns.so.2 libnss_files.so.2 libresolv.so.2"
 
-        fakeRootCommands = ''
-          mkdir -p ./usr/bin ./bin ./tmp ./lib64
-          chmod 1777 ./tmp
+            find $out/bin $out/lib -type f -exec file {} + | grep "ELF" | cut -d: -f1 | while read f; do
+              basename_f=$(basename "$f")
+              is_glibc_patchelf=false
+              for s in $glibc_skip_patchelf; do
+                if [ "$basename_f" = "$s" ]; then is_glibc_patchelf=true; break; fi
+              done
+              if [ "$is_glibc_patchelf" != "true" ]; then
+                patchelf --set-rpath "/lib" "$f" 2>/dev/null || true
+              fi
 
-          # Satisfy Modal's standard shebangs
-          ln -s /bin/env ./usr/bin/env
-          ln -s /bin/python3 ./usr/bin/python
+              # Remove references to all known store paths
+              for store_path in ${llama-cpp-cuda} ${glibc} ${gcc-lib} ${openssl} ${oniguruma} \
+                               ${cudart} ${cublas} ${gcc-libgcc} ${libidn2} ${libunistring} \
+                               ${pythonBase} ${pythonEnv} ${zlib} ${ncurses} ${libffi} ${expat} ${mpdecimal} \
+                               ${sqlite} ${readline} ${bzip2} ${xz} ${util-linux}; do
+                remove-references-to -t "$store_path" "$f"
+              done
+            done
 
-          # Satisfy standard binaries injected by Modal (like add_python)
-          ln -s /lib/ld-linux-x86-64.so.2 ./lib64/ld-linux-x86-64.so.2
-        '';
+            # Scrub remaining /nix/store references from binaries.
+            own_hash=$(basename $out | cut -c1-32)
+            ${pythonBase}/bin/python3 -c "
+            import os, re, sys
+            own_hash = sys.argv[1].encode()
+            root = sys.argv[2]
+            pattern = re.compile(rb'/nix/store/([a-z0-9]{32})-')
+            for dirpath, _, filenames in os.walk(root):
+                for fn in filenames:
+                    fp = os.path.join(dirpath, fn)
+                    if os.path.islink(fp):
+                        continue
+                    try:
+                        with open(fp, 'rb') as f:
+                            data = f.read()
+                        new_data = data
+                        for m in set(pattern.findall(data)):
+                            if m != own_hash and m != b'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee':
+                                new_data = new_data.replace(m, b'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+                        if new_data != data:
+                            with open(fp, 'wb') as f:
+                                f.write(new_data)
+                            print(f'Scrubbed references in {fp}')
+                    except Exception as e:
+                        print(f'Error scrubbing {fp}: {e}')
+            " "$own_hash" "$out"
 
-        config = {
-          # Entrypoint removed so Modal can execute its own commands
-          Env = [
-            "PATH=/usr/local/bin:/usr/bin:/bin"
-            "LD_LIBRARY_PATH=/lib:/usr/lib64"
-            "PYTHONHOME=/"
-            # CRITICAL: Tell python where to find the site-packages we just copied!
-            "PYTHONPATH=/lib/python3.13/site-packages"
-            # Required for nvidia-container-toolkit to mount GPU drivers into the container
-            "NVIDIA_VISIBLE_DEVICES=all"
-            "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
+            # Set the ELF interpreter to /lib (container root)
+            patchelf --set-interpreter /lib/ld-linux-x86-64.so.2 $out/bin/llama-server
+            patchelf --set-interpreter /lib/ld-linux-x86-64.so.2 $out/bin/python3
+            patchelf --set-interpreter /lib/ld-linux-x86-64.so.2 $out/bin/python
+          '';
+
+        docker-image = pkgs.dockerTools.buildLayeredImage {
+          name = "ghcr.io/bowmanjd/llama-cpp-cuda";
+          tag = "${cfg.llamaCppTag}-cuda${cudaVersion}";
+          contents = [
+            llama-cpp-cuda-slim
+            pkgs.dockerTools.caCertificates
+            pkgs.busybox
           ];
-          ExposedPorts = {"8000/tcp" = {};};
+
+          fakeRootCommands = ''
+            mkdir -p ./usr/bin ./bin ./tmp ./lib64
+            chmod 1777 ./tmp
+
+            # Satisfy Modal's standard shebangs
+            ln -s /bin/env ./usr/bin/env
+            ln -s /bin/python3 ./usr/bin/python
+
+            # Satisfy standard binaries injected by Modal (like add_python)
+            ln -s /lib/ld-linux-x86-64.so.2 ./lib64/ld-linux-x86-64.so.2
+          '';
+
+          config = {
+            # Entrypoint removed so Modal can execute its own commands
+            Env = [
+              "PATH=/usr/local/bin:/usr/bin:/bin"
+              "LD_LIBRARY_PATH=/lib:/usr/lib64"
+              "PYTHONHOME=/"
+              # CRITICAL: Tell python where to find the site-packages we just copied!
+              "PYTHONPATH=/lib/python3.13/site-packages"
+              # Required for nvidia-container-toolkit to mount GPU drivers into the container
+              "NVIDIA_VISIBLE_DEVICES=all"
+              "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
+            ];
+            ExposedPorts = {"8000/tcp" = {};};
+          };
         };
+      in {
+        llama-cpp = llama-cpp-cuda;
+        slim = llama-cpp-cuda-slim;
+        container = docker-image;
       };
-    in {
-      default = llama-cpp-cuda;
-      llama-cpp = llama-cpp-cuda;
-      container = docker-image;
-      llama-cpp-cuda-slim = llama-cpp-cuda-slim;
-      inherit llguidance;
-    });
+
+      # Map over all CUDA versions in config.json
+      versionedPackages = pkgs.lib.mapAttrs (version: vcfg:
+        makeLlamaPackages {
+          cudaVersion = version;
+          cudaPkgAttr = vcfg.pkgAttr;
+          architectures = vcfg.architectures;
+        })
+      cfg.cudaVersions;
+
+      # Flatten the versioned packages into a single attribute set
+      # e.g., container-13-0, llama-cpp-13-0, container-12-9, etc.
+      flattenedPackages = pkgs.lib.concatMapAttrs (version: packages: let
+        slug = toSlug version;
+      in {
+        "llama-cpp-${slug}" = packages.llama-cpp;
+        "slim-${slug}" = packages.slim;
+        "container-${slug}" = packages.container;
+      })
+      versionedPackages;
+
+      # Default points to the first one in the list (or we could pick a specific one)
+      defaultVersion = builtins.elemAt (builtins.attrNames cfg.cudaVersions) 0;
+      defaultSlug = toSlug defaultVersion;
+    in
+      flattenedPackages
+      // {
+        default = flattenedPackages."llama-cpp-${defaultSlug}";
+        llama-cpp = flattenedPackages."llama-cpp-${defaultSlug}";
+        llguidance = llguidance;
+        # For convenience/backward compatibility if someone uses .#container
+        container = flattenedPackages."container-${defaultSlug}";
+      });
   };
 }
