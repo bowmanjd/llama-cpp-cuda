@@ -65,7 +65,9 @@
         cudaPkgAttr,
         architectures,
       }: let
-        cudaPackages = pkgs.${cudaPkgAttr};
+        cudaPackages = pkgs.${cudaPkgAttr} // {
+          cuda_cccl = pkgs.${cudaPkgAttr}.cccl;
+        };
 
         # Helper to enable HTTPS support
         withHttps = pkg:
