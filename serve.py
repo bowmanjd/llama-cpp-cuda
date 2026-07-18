@@ -27,7 +27,7 @@ llama_api_key = modal.Secret.from_name("llama-api-key")
     timeout=3600,
     max_containers=1,
 )
-@modal.web_server(port=8000, startup_timeout=600)
+@modal.web_server(port=8000, startup_timeout=1600)
 def serve():
     import subprocess
     import sys
@@ -48,9 +48,9 @@ def serve():
         "0.0.0.0",
         "--port",
         "8000",
-        "--fa",
+        "-fa",
         "on",
-        "--fitt",
+        "-fitt",
         "0",
         # "--no-mmproj",
         # "true",
