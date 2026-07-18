@@ -59,6 +59,7 @@
 
     # Python for Modal support
     pythonBase = pkgs.python3;
+    pyVer = pythonBase.pythonVersion;
     pythonEnv = pkgs.python3.withPackages (ps: with ps; [
       protobuf
       grpcio
@@ -148,17 +149,18 @@
         cp -P ${pythonBase}/lib/libpython3*.so* $out/lib/ 2>/dev/null || true
 
         # Python standard library
-        mkdir -p $out/lib/python3.13
-        cp -a ${pythonBase}/lib/python3.13/* $out/lib/python3.13/
-        chmod -R u+w $out/lib/python3.13
+        mkdir -p $out/lib/python${pyVer}
+        cp -a ${pythonBase}/lib/python${pyVer}/* $out/lib/python${pyVer}/ 2>/dev/null || true
+        chmod -R u+w $out/lib/python${pyVer} 2>/dev/null || true
 
         # Layer pythonEnv site-packages
-        cp -RL ${pythonEnv}/lib/python3.13/site-packages/. $out/lib/python3.13/site-packages/
-        chmod -R u+w $out/lib/python3.13
+        mkdir -p $out/lib/python${pyVer}/site-packages
+        cp -RL ${pythonEnv}/lib/python${pyVer}/site-packages/. $out/lib/python${pyVer}/site-packages/ 2>/dev/null || true
+        chmod -R u+w $out/lib/python${pyVer} 2>/dev/null || true
 
         # Clean up Python
-        rm -rf $out/lib/python3.13/test
-        find $out/lib/python3.13 -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+        rm -rf $out/lib/python${pyVer}/test 2>/dev/null || true
+        find $out/lib/python${pyVer} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
         # Python runtime dependencies
         cp -P ${pkgs.zlib.out}/lib/libz.so* $out/lib/ 2>/dev/null || true
@@ -242,6 +244,7 @@
   }: let
     accelType = slimPackage.accelType or (getAccelType slimPackage);
     llamaPackage = slimPackage.llamaPackage or slimPackage;
+    pyVer = pkgs.python3.pythonVersion;
 
     # Generate tag from package version and accel type
     version = llamaPackage.version or "latest";
@@ -259,7 +262,7 @@
     # Python environment variables
     pythonEnv = lib.optionals includeModal [
       "PYTHONHOME=/"
-      "PYTHONPATH=/lib/python3.13/site-packages"
+      "PYTHONPATH=/lib/python${pyVer}/site-packages"
     ];
   in
     pkgs.dockerTools.buildLayeredImage {

@@ -182,7 +182,12 @@ if (LLAMA_LLGUIDANCE)\
         ++ [ cudaPkgs.cuda_nvcc rocmPkgs.clr prev.cmake prev.ninja ];
 
       buildInputs = (old.buildInputs or [])
-        ++ [ cudaPkgs.cuda_cudart cudaPkgs.cuda_nvcc cudaPkgs.libcublas cudaPkgs.cuda_cccl ]
+        ++ (lib.filter (p: p != null) [
+          cudaPkgs.cuda_cudart
+          cudaPkgs.cuda_nvcc
+          cudaPkgs.libcublas
+          (cudaPkgs.cuda_cccl or cudaPkgs.cccl or null)
+        ])
         ++ [ rocmPkgs.clr rocmPkgs.hipblas rocmPkgs.rocblas ];
 
       cmakeFlags = (lib.lists.filter (f:
