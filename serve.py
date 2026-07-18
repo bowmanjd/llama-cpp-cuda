@@ -1,12 +1,10 @@
 import modal
 
 cuda_version = "13.0"
-llama_cpp_tag = "b8793"
+llama_cpp_tag = "b10066"
 container_image = f"ghcr.io/bowmanjd/llama-cpp-cuda:{llama_cpp_tag}-cuda{cuda_version}"
 hf_hub_cache = "/hub"
-# model_id = "Jackrong/Qwopus3.5-27B-v3-GGUF:Q5_K_M"
-model_id = "unsloth/gemma-4-31B-it-GGUF:UD-Q5_K_XL"
-# model_id = "Jackrong/Qwopus3.5-4B-v3-GGUF:Q5_K_M"
+model_id = "unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q8_K_XL"
 
 image = (
     modal.Image.from_registry(container_image)
@@ -38,9 +36,37 @@ def serve():
         "0.0.0.0",
         "--port",
         "8000",
+        "--fa",
+        "on",
+        "--fitt",
+        "0",
+        # "--no-mmproj",
+        # "true",
+        # "--no-mmap",
+        # "true",
         "--jinja",
-		"-hf",
-		model_id
+        "--spec-type",
+        "draft-mtp",
+        # "-ctk",
+        # "q8_0",
+        # "-ctv",
+        # "q8_0",
+        "-ub",
+        "2048",
+        "--temp",
+        "0.6",
+        "--top-k",
+        "20",
+        "--min-p",
+        "0.0",
+        "--top-p",
+        "0.95",
+        "--presence-penalty",
+        "0.0",
+        "--repeat-penalty",
+        "1.0",
+        "-hf",
+        model_id,
     ]
 
     # We use Popen because @modal.web_server monitors the background process

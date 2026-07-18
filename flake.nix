@@ -115,6 +115,7 @@
         containerPair = containerUtils.makeContainerPair {
           llamaPackage = llama-cpp-cuda;
           cudaPackages = cudaPkgs;
+          imageTag = "${cfg.llamaCppTag}-cuda${cudaVersion}";
         };
       in {
         llama-cpp = llama-cpp-cuda;
