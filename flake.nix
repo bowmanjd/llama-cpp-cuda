@@ -155,5 +155,22 @@
         llguidance = pkgs.llguidance;
         container = flattenedPackages."container-${defaultSlug}";
       });
+
+    devShells = forAllSystems (system: let
+      pkgs = import nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+      };
+      pythonEnv = pkgs.python3.withPackages (ps: with ps; [
+        boto3
+        requests
+      ]);
+    in {
+      default = pkgs.mkShell {
+        packages = [
+          pythonEnv
+        ];
+      };
+    });
   };
 }
