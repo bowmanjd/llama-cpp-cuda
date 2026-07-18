@@ -101,6 +101,7 @@
             overlays = [
               (self.overlays.configure {
                 acceleration = "cuda";
+                nativeCpu = false;
                 llguidance = true;
                 https = true;
                 cudaPackages = cudaPkgs;

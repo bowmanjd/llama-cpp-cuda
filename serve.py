@@ -21,14 +21,26 @@ llama_api_key = modal.Secret.from_name("llama-api-key")
 
 @app.function(
     image=image,
-    gpu="L40S",
+    gpu=["L40S", "A100", "RTX-PRO-6000"],
     volumes={hf_hub_cache: hf_cache_volume},
     secrets=[llama_api_key],
     timeout=3600,
+    max_containers=1,
 )
 @modal.web_server(port=8000, startup_timeout=600)
 def serve():
     import subprocess
+    import sys
+    import os
+    import shutil
+    import threading
+
+    print("=== Starting serve() function in Modal ===", flush=True)
+    print(f"PATH: {os.environ.get('PATH')}", flush=True)
+    print(f"LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH')}", flush=True)
+    
+    llama_server_path = shutil.which("llama-server")
+    print(f"llama-server executable: {llama_server_path}", flush=True)
 
     cmd = [
         "llama-server",
@@ -69,8 +81,27 @@ def serve():
         model_id,
     ]
 
-    # We use Popen because @modal.web_server monitors the background process
-    subprocess.Popen(cmd)
+    print(f"Spawning command: {' '.join(cmd)}", flush=True)
+
+    # Launch process and pipe stdout/stderr
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    # Stream logs to stdout
+    def log_streamer():
+        for line in iter(process.stdout.readline, ""):
+            print(f"[llama-server] {line}", end="", flush=True)
+        process.stdout.close()
+        process.wait()
+        print(f"[llama-server] Exited with code {process.returncode}", flush=True)
+
+    t = threading.Thread(target=log_streamer, daemon=True)
+    t.start()
 
 
 @app.local_entrypoint()
