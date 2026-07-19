@@ -45,3 +45,40 @@ https://modal.com/docs/guide/gpu.md (Covers requesting specific GPU types and th
 https://modal.com/docs/guide/volumes.md (Standard guide for high-performance read/write storage)
 https://modal.com/docs/guide/model-weights.md (Explains best practices for the "cache-and-mount" pattern you are using for Hugging Face)
 https://modal.com/docs/guide/environment_variables.md (Details on setting runtime variables at the App level)
+
+## Baseten Deployment (`serve_baseten.py`)
+
+Baseten deployment is handled programmatically via `serve_baseten.py` using Baseten's REST API.
+
+### Architectural Principles
+
+1. **Standard Truss Mode**: We don't use custom base images (`docker_server` with `base_image`) as they are gated by Baseten organization policies. Baseten deployment uses Standard Truss mode (`model/model.py`), running inside Baseten's standard runtime environment.
+2. **Nix Binary Bundling**: `serve_baseten.py` builds the Nix slim package (`.#slim-<version>`), copying `llama-server` and its dynamic libraries into `model/bin` and `model/lib` inside the model archive (`model.tgz`).
+3. **Dynamic Loader Execution**: `model.py` invokes `llama-server` via the bundled loader (`model/lib/ld-linux-x86-64.so.2 --library-path ...`) to insulate the Nix binary from host glibc differences, while mounting `/usr/lib64` for host GPU `libcuda.so.1`.
+4. **API Request Proxying**: `model.py` spawns `llama-server` on `127.0.0.1:8000` and proxies incoming predictions (standard and streaming) to `/v1/chat/completions`.
+
+### Usage & GPU Selection
+
+```sh
+# Deploy using default instance type
+./serve_baseten.py
+
+# Deploy using specific accelerator or instance SKU
+./serve_baseten.py --accelerator A10G
+./serve_baseten.py --instance-type A100:12x144
+```
+
+### Useful API Calls & Documentation Endpoints
+
+- **Live Available Hardware API**:
+  ```bash
+  curl -H "Authorization: Bearer $BASETEN_API_KEY" https://api.baseten.co/v1/instance_type_prices
+  ```
+  *(Returns the exact hardware SKUs and GPU types enabled for your API key/workspace).*
+
+- **Documentation References**:
+  - `https://docs.baseten.co/llms.txt` (Complete documentation sitemap)
+  - `https://docs.baseten.co/reference/management-api/instance-types/gets-all-instance-types.md` (Instance types API reference)
+  - `https://docs.baseten.co/deployment/resources.md` (Resource and instance configuration reference)
+  - `https://docs.baseten.co/development/model/custom-server.md` (Custom server and Truss build specification)
+
