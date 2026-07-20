@@ -39,8 +39,8 @@ def parse_arguments(cuda_versions, default_cuda):
     )
     parser.add_argument(
         "--model-id",
-        default="unsloth/gemma-4-31B-it-GGUF:UD-Q5_K_XL",
-        help="Hugging Face GGUF model repository and file to download/serve. Default: unsloth/gemma-4-31B-it-GGUF:UD-Q5_K_XL"
+        default="unsloth/gemma-4-31B-it-qat-GGUF:UD-Q4_K_XL",
+        help="Hugging Face GGUF model repository and file to download/serve."
     )
     parser.add_argument(
         "--accelerator",
@@ -49,7 +49,7 @@ def parse_arguments(cuda_versions, default_cuda):
     )
     parser.add_argument(
         "--instance-type",
-        default="A10G:2x24x96",
+        default="A10Gx4x16",
         help="Specific Baseten instance type SKU (e.g. 'A100:12x144', 'A10Gx8x32', 'L4:4x16'). Overrides accelerator/cpu/memory if set."
     )
     parser.add_argument(
@@ -354,6 +354,12 @@ class Model:
             "--host", "127.0.0.1",
             "--port", "8000",
             "--jinja",
+			"-fa",
+			"on",
+			"-fitt",
+			"0",
+			"--spec-type",
+			"draft-mtp",
             "-hf", model_id
         ]
 

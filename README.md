@@ -19,13 +19,21 @@ You can build specific versions using their Nix attributes:
 # Build llama.cpp binary for CUDA 12.9
 nix build .#llama-cpp-12-9
 
-# Build container for CUDA 13.0
+# Build OCI container for CUDA 13.0
 nix build .#container-13-0
+
+# Build slim package for Baseten (CUDA 13.0)
+nix build .#slim-13-0
 ```
 
-By default, `nix build .#container` or `nix build .#llama-cpp` will build the first version listed in `config.json`.
+By default, `nix build .#container` or `nix build .#llama-cpp` will build the default version listed in `config.json`.
 
-The container is configured to listen on port 8000 by default. Load it into podman (or use docker):
+### Build Attributes
+- `.#llama-cpp-<version>`: Standard `llama.cpp` binary build.
+- `.#container-<version>`: Full OCI container image for podman/docker.
+- `.#slim-<version>`: Minimal package containing `llama-server` and essential dynamic libraries, designed for Baseten bundling.
+
+The OCI container is configured to listen on port 8000 by default. Load it into podman (or use docker):
 
 ```bash
 podman load < result
@@ -56,16 +64,25 @@ Versions and build options are managed in `config.json`:
   - `pkgAttr`: The Nixpkgs attribute for the CUDA package set.
   - `architectures`: Semi-colon separated list of CUDA architectures to target (e.g., `80` for A100, `89` for L4/L40S).
 
-## Building
+## Baseten Deployment
 
-You can build specific versions using their Nix attributes:
+Deploying to Baseten is handled programmatically via `serve_baseten.py` using Baseten's REST API.
+
+`serve_baseten.py` automatically builds the Nix slim package (`.#slim-<version>`), copies `llama-server` and its dynamic libraries into a Truss archive, and deploys it to Baseten.
+
+### Usage
+
+Ensure `BASETEN_API_KEY` is set in your environment:
 
 ```bash
-# Build llama.cpp binary for CUDA 12.9
-nix build .#llama-cpp-12-9
+export BASETEN_API_KEY="your-api-key"
 
-# Build container for CUDA 13.0
-nix build .#container-13-0
+# Deploy using default settings
+./serve_baseten.py
+
+# Deploy with specific CUDA version, GPU accelerator, or instance SKU
+./serve_baseten.py --cuda-version 13.0 --accelerator A10G
+./serve_baseten.py --instance-type A100:12x144 --model-id unsloth/gemma-4-31B-it-GGUF:UD-Q5_K_XL
 ```
 
 ## Publishing to GHCR
@@ -81,4 +98,3 @@ Use the provided `publish.sh` script with the desired CUDA version (requires `po
 ```bash
 ./publish.sh 13.0
 ```
-
