@@ -1,5 +1,7 @@
 # Agent Instructions: llama-cpp-cuda
 
+Unless instructed, don't initiate builds yourself; they take a very long time.
+
 This repository provides a standalone Nix flake for building an OCI container with `llama.cpp` with CUDA 13 support and specialized optimizations.
 
 ## Core Architectural Principles

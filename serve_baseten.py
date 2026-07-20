@@ -287,7 +287,7 @@ class Model:
         bin_dir = os.path.dirname(bin_path)
         bin_parent = os.path.dirname(bin_dir)
 
-        candidate_lib_names = ["deps", "libs", "lib"]
+        candidate_lib_names = ["deps", "libs", "lib", "bin"]
         raw_lib_paths = []
 
         for base in [bin_parent, model_dir, parent_dir, "/app/model", "/app"]:
@@ -447,27 +447,57 @@ class Model:
         with open(model_py_path, "w") as f:
             f.write(model_py_content)
 
-        # Copy llama-server binary
-        src_bin = os.path.join(slim_path, "bin", "llama-server")
-        dest_bin = os.path.join(bin_dir, "llama-server")
-        print("Copying llama-server binary...")
-        shutil.copy2(src_bin, dest_bin)
+        def copy_file_smart(src_path, dest_path):
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            if os.path.islink(src_path):
+                link_target = os.readlink(src_path)
+                real_target = os.path.realpath(src_path)
+                if not os.path.isabs(link_target):
+                    if os.path.lexists(dest_path):
+                        os.remove(dest_path)
+                    os.symlink(link_target, dest_path)
+                elif os.path.exists(real_target):
+                    target_basename = os.path.basename(real_target)
+                    if target_basename != os.path.basename(dest_path):
+                        if os.path.lexists(dest_path):
+                            os.remove(dest_path)
+                        os.symlink(target_basename, dest_path)
+                    else:
+                        if os.path.lexists(dest_path):
+                            os.remove(dest_path)
+                        shutil.copy2(real_target, dest_path)
+                else:
+                    if os.path.lexists(dest_path):
+                        os.remove(dest_path)
+                    shutil.copy2(src_path, dest_path)
+            elif os.path.isfile(src_path):
+                if os.path.lexists(dest_path):
+                    os.remove(dest_path)
+                shutil.copy2(src_path, dest_path)
+            elif os.path.isdir(src_path):
+                shutil.copytree(src_path, dest_path, symlinks=True, dirs_exist_ok=True)
 
-        # Copy lib/*.so* to both deps and lib directories
-        src_lib_dir = os.path.join(slim_path, "lib")
-        print("Copying shared libraries...")
-        for item in os.listdir(src_lib_dir):
-            s = os.path.join(src_lib_dir, item)
-            for target_base in [deps_dir, lib_dir]:
-                d = os.path.join(target_base, item)
-                if os.path.islink(s):
-                    linkto = os.readlink(s)
-                    if not os.path.exists(d) and not os.path.islink(d):
-                        os.symlink(linkto, d)
-                elif os.path.isfile(s):
-                    shutil.copy2(s, d)
-                elif os.path.isdir(s):
-                    shutil.copytree(s, d, symlinks=True, dirs_exist_ok=True)
+        # Copy binaries and shared libraries from slim package bin and lib directories
+        print("Copying binaries and shared libraries...")
+
+        # 1. Copy everything in slim_path/bin to model/bin, and all .so* files to model/deps and model/lib
+        src_bin_dir = os.path.join(slim_path, "bin")
+        if os.path.exists(src_bin_dir):
+            for item in os.listdir(src_bin_dir):
+                s = os.path.join(src_bin_dir, item)
+                copy_file_smart(s, os.path.join(bin_dir, item))
+                if ".so" in item:
+                    for target_base in [deps_dir, lib_dir]:
+                        copy_file_smart(s, os.path.join(target_base, item))
+
+        # 2. Copy everything in slim_path/lib (and lib64) to model/deps, model/lib, and model/bin
+        for lib_sub in ["lib", "lib64"]:
+            src_l_dir = os.path.join(slim_path, lib_sub)
+            if os.path.exists(src_l_dir):
+                for item in os.listdir(src_l_dir):
+                    s = os.path.join(src_l_dir, item)
+                    for target_base in [deps_dir, lib_dir, bin_dir]:
+                        copy_file_smart(s, os.path.join(target_base, item))
 
         # Package the model archive
         archive_path = os.path.join(temp_dir, "model.tgz")

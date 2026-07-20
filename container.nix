@@ -107,10 +107,17 @@
     } ''
       mkdir -p $out/bin $out/lib
 
-      # Copy llama-server and backend plugins
+      # Copy llama-server and backend plugins / shared libraries
       cp ${llamaPackage}/bin/llama-server $out/bin/
-      cp -P ${llamaPackage}/bin/*.so $out/bin/ 2>/dev/null || true
+      cp -P ${llamaPackage}/bin/*.so* $out/bin/ 2>/dev/null || true
+      cp -P ${llamaPackage}/bin/*.so* $out/lib/ 2>/dev/null || true
       cp -P ${llamaPackage}/lib/*.so* $out/lib/ 2>/dev/null || true
+      cp -P ${llamaPackage}/lib/*.so* $out/bin/ 2>/dev/null || true
+      if [ -d ${llamaPackage}/lib64 ]; then
+        cp -P ${llamaPackage}/lib64/*.so* $out/lib/ 2>/dev/null || true
+        cp -P ${llamaPackage}/lib64/*.so* $out/bin/ 2>/dev/null || true
+      fi
+
 
       # Copy core runtime libraries
       for lib in libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 ld-linux-x86-64.so.2 libnss_dns.so.2 libnss_files.so.2 libresolv.so.2; do
