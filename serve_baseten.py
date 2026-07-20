@@ -3,7 +3,10 @@
 serve_baseten.py
 
 A script to programmatically deploy a dedicated llama-server GGUF inference endpoint
-to Baseten using custom container mode (no_build: true) via Baseten's REST API.
+to Baseten using Standard Truss mode (model/model.py) via Baseten's REST API. The
+Nix-built slim package (llama-server, backend plugins, shared libraries, and the Nix
+ELF loader) is bundled into a single self-contained directory and launched via the
+bundled loader to insulate it from the host glibc.
 """
 
 import os
@@ -255,25 +258,19 @@ class Model:
         self._process = None
 
     def load(self):
-        # 1. Locate the packaged binary across potential extraction layouts
+        # 1. Locate the packaged binary. All artifacts (llama-server, every .so
+        #    plugin/library, and the bundled Nix ELF loader) live co-located in a
+        #    single self-contained directory (model/bin).
         model_dir = os.path.dirname(__file__)
-        parent_dir = os.path.dirname(model_dir)
         candidate_bins = [
             os.path.join(model_dir, "bin", "llama-server"),
-            os.path.join(model_dir, "llama-server"),
-            os.path.join(parent_dir, "bin", "llama-server"),
             "/app/model/bin/llama-server",
-            "/app/bin/llama-server"
+            os.path.join(model_dir, "llama-server"),
         ]
 
-        bin_path = None
-        for cb in candidate_bins:
-            if os.path.isfile(cb):
-                bin_path = cb
-                break
-
+        bin_path = next((cb for cb in candidate_bins if os.path.isfile(cb)), None)
         if not bin_path:
-            raise FileNotFoundError(f"Could not locate llama-server binary in candidate locations: {candidate_bins}")
+            raise FileNotFoundError(f"Could not locate llama-server binary in: {candidate_bins}")
 
         print(f"Found llama-server at: {bin_path}")
 
@@ -283,51 +280,64 @@ class Model:
         except Exception as e:
             print(f"Warning: Failed to set executable permissions on binary: {e}", file=sys.stderr)
 
-        # 2. Locate dynamic library paths and ELF loader
-        bin_dir = os.path.dirname(bin_path)
-        bin_parent = os.path.dirname(bin_dir)
+        # 2. Everything is co-located with the binary.
+        runtime_dir = os.path.dirname(bin_path)
 
-        candidate_lib_names = ["deps", "libs", "lib", "bin"]
-        raw_lib_paths = []
+        # Locate the bundled Nix loader (co-located), falling back to host loaders.
+        loader_path = os.path.join(runtime_dir, "ld-linux-x86-64.so.2")
+        if not os.path.isfile(loader_path):
+            loader_path = None
+            for cl in ("/lib64/ld-linux-x86-64.so.2",
+                       "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"):
+                if os.path.isfile(cl):
+                    loader_path = cl
+                    break
 
-        for base in [bin_parent, model_dir, parent_dir, "/app/model", "/app"]:
-            for lname in candidate_lib_names:
-                raw_lib_paths.append(os.path.abspath(os.path.join(base, lname)))
-
-        # Deduplicate preserving order
-        lib_paths = []
-        for lp in raw_lib_paths:
-            if lp not in lib_paths:
-                lib_paths.append(lp)
-
-        existing_lib_paths = [lp for lp in lib_paths if os.path.isdir(lp)]
-        print(f"Checked candidate library paths: {lib_paths}")
-        print(f"Found existing library paths: {existing_lib_paths}")
-
-        # Locate dynamic loader (ld-linux-x86-64.so.2), prioritizing the bundled loader from Nix
-        loader_path = None
-        candidate_loaders = [os.path.join(lp, "ld-linux-x86-64.so.2") for lp in existing_lib_paths] + [
-            "/lib64/ld-linux-x86-64.so.2",
-            "/lib/ld-linux-x86-64.so.2",
-            "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
-        ]
-
-        for cl in candidate_loaders:
-            if os.path.isfile(cl):
-                loader_path = cl
-                break
-
-        # 3. Environment setup: update LD_LIBRARY_PATH
+        # 3. Environment: bundled dir first so our glibc/libstdc++/CUDA runtime win
+        #    over the host's, then host driver locations for libcuda.so.1.
         env = os.environ.copy()
-        existing_ld = env.get("LD_LIBRARY_PATH", "")
-        all_paths = list(existing_lib_paths)
-        if existing_ld:
-            all_paths.append(existing_ld)
-
-        all_paths.extend(["/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/run/opengl-driver/lib"])
-        lib_path_str = ":".join(all_paths)
+        lib_paths = [runtime_dir, "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/run/opengl-driver/lib"]
+        if env.get("LD_LIBRARY_PATH"):
+            lib_paths.append(env["LD_LIBRARY_PATH"])
+        lib_path_str = ":".join(lib_paths)
         env["LD_LIBRARY_PATH"] = lib_path_str
         print(f"Configured LD_LIBRARY_PATH: {lib_path_str}")
+
+        # Deterministically load the CUDA backend plugin. Under the loader
+        # invocation, /proc/self/exe resolves to the loader, so ggml's executable-dir
+        # plugin search may miss model/bin; GGML_BACKEND_PATH makes ggml dlopen this
+        # exact file regardless (ggml-backend-reg.cpp).
+        cuda_plugin = os.path.join(runtime_dir, "libggml-cuda.so")
+        if os.path.isfile(cuda_plugin):
+            env["GGML_BACKEND_PATH"] = cuda_plugin
+            print(f"Set GGML_BACKEND_PATH={cuda_plugin}")
+        else:
+            print(f"Warning: {cuda_plugin} not found; CUDA backend may be unavailable.", file=sys.stderr)
+
+        # 3b. Preflight: confirm a CUDA device is actually visible before committing
+        #     to a multi-minute model download. `--list-devices` loads the backends
+        #     (honoring GGML_BACKEND_PATH) and prints non-CPU devices, then exits.
+        #     Release builds run with NDEBUG, which silences dlopen failures of
+        #     libggml-cuda.so, so a missing GPU backend would otherwise surface only
+        #     as a silent ~10x-slower CPU run. This turns that into an immediate,
+        #     explicit startup failure. Device selection is left at the default (all
+        #     GPUs), so this does not restrict multi-GPU instances.
+        list_cmd = ([loader_path, "--library-path", lib_path_str] if loader_path else []) + [bin_path, "--list-devices"]
+        try:
+            probe = subprocess.run(
+                list_cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, timeout=120,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to run llama-server --list-devices preflight: {e}")
+        print("llama-server --list-devices output:")
+        print(probe.stdout)
+        if "CUDA" not in probe.stdout:
+            raise RuntimeError(
+                "No CUDA device detected by 'llama-server --list-devices'; the GPU "
+                "backend did not load and inference would silently fall back to CPU. "
+                "Verify libggml-cuda.so and host libcuda.so.1 are resolvable."
+            )
 
         # 4. Retrieve model info from config
         model_metadata = self._config.get("model_metadata", {})
@@ -354,22 +364,19 @@ class Model:
             "--host", "127.0.0.1",
             "--port", "8000",
             "--jinja",
-			"-fa",
-			"on",
-			"-fitt",
-			"0",
-			"--spec-type",
-			"draft-mtp",
-            "-hf", model_id
+            "-fa", "on",
+            "-fitt", "0",
+            "--spec-type", "draft-mtp",
+            "-ngl", "999",
+            "-hf", model_id,
         ]
 
-        # 6. Build command: invoke via bundled loader with explicit library path for complete distro isolation
+        # 6. Invoke via the bundled loader so we use our glibc, not the host's.
         if loader_path:
             print(f"Invoking llama-server via loader '{loader_path}' with library path '{lib_path_str}'")
             cmd = [loader_path, "--library-path", lib_path_str] + server_args
         else:
             cmd = server_args
-
 
         print(f"Starting llama-server: {' '.join(cmd)}")
         self._process = subprocess.Popen(
@@ -381,8 +388,7 @@ class Model:
             bufsize=1
         )
 
-
-        # Stream logs to stdout
+        # Stream logs to stdout.
         def log_streamer():
             for line in iter(self._process.stdout.readline, ""):
                 print(f"[llama-server] {line}", end="", flush=True)
@@ -393,25 +399,29 @@ class Model:
         t = threading.Thread(target=log_streamer, daemon=True)
         t.start()
 
-        # 5. Wait for the server to be healthy
+        # 7. Wait for the server to be healthy
         health_url = "http://127.0.0.1:8000/health"
         start_time = time.time()
         timeout = 900  # 15 minutes to allow for large model download
 
         print("Waiting for llama-server to start up and download model...")
+        healthy = False
         while time.time() - start_time < timeout:
             if self._process.poll() is not None:
                 raise RuntimeError(f"llama-server exited early with code {self._process.returncode}")
             try:
-                resp = requests.get(health_url, timeout=5)
-                if resp.status_code == 200:
-                    print("llama-server is healthy!")
-                    return
+                if requests.get(health_url, timeout=5).status_code == 200:
+                    healthy = True
+                    break
             except Exception:
                 pass
             time.sleep(5)
 
-        raise TimeoutError("llama-server failed to start within timeout.")
+        if not healthy:
+            raise TimeoutError("llama-server failed to start within timeout.")
+
+        print("llama-server is healthy!")
+        return
 
     def predict(self, model_input):
         # Forward the request to llama-server
@@ -436,10 +446,6 @@ class Model:
         os.makedirs(model_dir, exist_ok=True)
         bin_dir = os.path.join(model_dir, "bin")
         os.makedirs(bin_dir, exist_ok=True)
-        deps_dir = os.path.join(model_dir, "deps")
-        os.makedirs(deps_dir, exist_ok=True)
-        lib_dir = os.path.join(model_dir, "lib")
-        os.makedirs(lib_dir, exist_ok=True)
 
         config_path = os.path.join(temp_dir, "config.yaml")
         with open(config_path, "w") as f:
@@ -483,27 +489,17 @@ class Model:
             elif os.path.isdir(src_path):
                 shutil.copytree(src_path, dest_path, symlinks=True, dirs_exist_ok=True)
 
-        # Copy binaries and shared libraries from slim package bin and lib directories
-        print("Copying binaries and shared libraries...")
-
-        # 1. Copy everything in slim_path/bin to model/bin, and all .so* files to model/deps and model/lib
-        src_bin_dir = os.path.join(slim_path, "bin")
-        if os.path.exists(src_bin_dir):
-            for item in os.listdir(src_bin_dir):
-                s = os.path.join(src_bin_dir, item)
-                copy_file_smart(s, os.path.join(bin_dir, item))
-                if ".so" in item:
-                    for target_base in [deps_dir, lib_dir]:
-                        copy_file_smart(s, os.path.join(target_base, item))
-
-        # 2. Copy everything in slim_path/lib (and lib64) to model/deps, model/lib, and model/bin
-        for lib_sub in ["lib", "lib64"]:
-            src_l_dir = os.path.join(slim_path, lib_sub)
-            if os.path.exists(src_l_dir):
-                for item in os.listdir(src_l_dir):
-                    s = os.path.join(src_l_dir, item)
-                    for target_base in [deps_dir, lib_dir, bin_dir]:
-                        copy_file_smart(s, os.path.join(target_base, item))
+        # Copy llama-server, every backend plugin, all shared libraries, and the
+        # bundled Nix ELF loader into a single self-contained directory (model/bin).
+        # Keeping everything co-located means the loader, the binary, and every
+        # libggml-*.so plugin share one directory, so /proc/self/exe-based plugin
+        # discovery and $ORIGIN-relative library resolution both resolve there.
+        print("Copying binaries and shared libraries into model/bin...")
+        for slim_sub in ["bin", "lib", "lib64"]:
+            src_dir = os.path.join(slim_path, slim_sub)
+            if os.path.isdir(src_dir):
+                for item in os.listdir(src_dir):
+                    copy_file_smart(os.path.join(src_dir, item), os.path.join(bin_dir, item))
 
         # Package the model archive
         archive_path = os.path.join(temp_dir, "model.tgz")

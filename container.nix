@@ -195,7 +195,10 @@
           if [ "$basename_f" = "$s" ]; then is_glibc_patchelf=true; break; fi
         done
         if [ "$is_glibc_patchelf" != "true" ]; then
-          patchelf --set-rpath "/lib" "$f" 2>/dev/null || true
+          # $ORIGIN first so co-located libs/plugins self-resolve regardless of
+          # where the bundle is extracted (container /lib, or Baseten /app/model/bin);
+          # /lib retained as a fallback for the OCI container layout.
+          patchelf --set-rpath '$ORIGIN:/lib' "$f" 2>/dev/null || true
         fi
 
         # Remove references to store paths
