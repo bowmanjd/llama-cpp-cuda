@@ -53,8 +53,8 @@ Baseten deployment is handled programmatically via `serve_baseten.py` using Base
 ### Architectural Principles
 
 1. **Standard Truss Mode**: We don't use custom base images (`docker_server` with `base_image`) as they are gated by Baseten organization policies. Baseten deployment uses Standard Truss mode (`model/model.py`), running inside Baseten's standard runtime environment.
-2. **Nix Binary Bundling**: `serve_baseten.py` builds the Nix slim package (`.#slim-<version>`), copying `llama-server` and its dynamic libraries into `model/bin` and `model/lib` inside the model archive (`model.tgz`).
-3. **Dynamic Loader Execution**: `model.py` invokes `llama-server` via the bundled loader (`model/lib/ld-linux-x86-64.so.2 --library-path ...`) to insulate the Nix binary from host glibc differences, while mounting `/usr/lib64` for host GPU `libcuda.so.1`.
+2. **Nix Binary Bundling**: `serve_baseten.py` builds the Nix slim package (`.#slim-<version>`), copying `llama-server` and its dynamic libraries into `model/bin` and `model/deps` (also mirrored to `model/lib`) inside the model archive (`model.tgz`).
+3. **Dynamic Loader Execution**: `model.py` invokes `llama-server` via the bundled loader (`model/deps/ld-linux-x86-64.so.2 --library-path ...`) to insulate the Nix binary from host glibc differences, while mounting `/usr/lib64` for host GPU `libcuda.so.1`.
 4. **API Request Proxying**: `model.py` spawns `llama-server` on `127.0.0.1:8000` and proxies incoming predictions (standard and streaming) to `/v1/chat/completions`.
 
 ### Usage & GPU Selection

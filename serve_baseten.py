@@ -64,8 +64,8 @@ def parse_arguments(cuda_versions, default_cuda):
     )
     parser.add_argument(
         "--model-name",
-        default="llama-cpp-gemma",
-        help="Name of the model as registered on Baseten. Default: llama-cpp-gemma"
+        default="llama-cpp",
+        help="Name of the model as registered on Baseten. Default: llama-cpp"
     )
     parser.add_argument(
         "--skip-polling",
@@ -284,16 +284,29 @@ class Model:
             print(f"Warning: Failed to set executable permissions on binary: {e}", file=sys.stderr)
 
         # 2. Locate dynamic library paths and ELF loader
-        lib_paths = [
-            os.path.join(model_dir, "lib"),
-            os.path.join(parent_dir, "lib"),
-            "/app/model/lib",
-            "/app/lib"
-        ]
+        bin_dir = os.path.dirname(bin_path)
+        bin_parent = os.path.dirname(bin_dir)
+
+        candidate_lib_names = ["deps", "libs", "lib"]
+        raw_lib_paths = []
+
+        for base in [bin_parent, model_dir, parent_dir, "/app/model", "/app"]:
+            for lname in candidate_lib_names:
+                raw_lib_paths.append(os.path.abspath(os.path.join(base, lname)))
+
+        # Deduplicate preserving order
+        lib_paths = []
+        for lp in raw_lib_paths:
+            if lp not in lib_paths:
+                lib_paths.append(lp)
+
+        existing_lib_paths = [lp for lp in lib_paths if os.path.isdir(lp)]
+        print(f"Checked candidate library paths: {lib_paths}")
+        print(f"Found existing library paths: {existing_lib_paths}")
 
         # Locate dynamic loader (ld-linux-x86-64.so.2), prioritizing the bundled loader from Nix
         loader_path = None
-        candidate_loaders = [os.path.join(lp, "ld-linux-x86-64.so.2") for lp in lib_paths] + [
+        candidate_loaders = [os.path.join(lp, "ld-linux-x86-64.so.2") for lp in existing_lib_paths] + [
             "/lib64/ld-linux-x86-64.so.2",
             "/lib/ld-linux-x86-64.so.2",
             "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
@@ -307,7 +320,7 @@ class Model:
         # 3. Environment setup: update LD_LIBRARY_PATH
         env = os.environ.copy()
         existing_ld = env.get("LD_LIBRARY_PATH", "")
-        all_paths = [lp for lp in lib_paths if os.path.isdir(lp)]
+        all_paths = list(existing_lib_paths)
         if existing_ld:
             all_paths.append(existing_ld)
 
@@ -417,6 +430,8 @@ class Model:
         os.makedirs(model_dir, exist_ok=True)
         bin_dir = os.path.join(model_dir, "bin")
         os.makedirs(bin_dir, exist_ok=True)
+        deps_dir = os.path.join(model_dir, "deps")
+        os.makedirs(deps_dir, exist_ok=True)
         lib_dir = os.path.join(model_dir, "lib")
         os.makedirs(lib_dir, exist_ok=True)
 
@@ -438,17 +453,21 @@ class Model:
         print("Copying llama-server binary...")
         shutil.copy2(src_bin, dest_bin)
 
-        # Copy lib/*.so*
+        # Copy lib/*.so* to both deps and lib directories
         src_lib_dir = os.path.join(slim_path, "lib")
         print("Copying shared libraries...")
         for item in os.listdir(src_lib_dir):
             s = os.path.join(src_lib_dir, item)
-            d = os.path.join(lib_dir, item)
-            if os.path.islink(s):
-                linkto = os.readlink(s)
-                os.symlink(linkto, d)
-            elif os.path.isfile(s):
-                shutil.copy2(s, d)
+            for target_base in [deps_dir, lib_dir]:
+                d = os.path.join(target_base, item)
+                if os.path.islink(s):
+                    linkto = os.readlink(s)
+                    if not os.path.exists(d) and not os.path.islink(d):
+                        os.symlink(linkto, d)
+                elif os.path.isfile(s):
+                    shutil.copy2(s, d)
+                elif os.path.isdir(s):
+                    shutil.copytree(s, d, symlinks=True, dirs_exist_ok=True)
 
         # Package the model archive
         archive_path = os.path.join(temp_dir, "model.tgz")
