@@ -52,8 +52,8 @@ def parse_arguments(cuda_versions, default_cuda):
     )
     parser.add_argument(
         "--instance-type",
-        default="A10Gx4x16",
-        help="Specific Baseten instance type SKU (e.g. 'A100:12x144', 'A10Gx8x32', 'L4:4x16'). Overrides accelerator/cpu/memory if set."
+        default="A10G:2x24x96",
+        help="Specific Baseten instance type SKU (e.g. 'A10G:2x24x96', 'A10G:4x48x192', 'A100:12x144'). Overrides accelerator/cpu/memory if set."
     )
     parser.add_argument(
         "--cpu",
@@ -248,6 +248,7 @@ model_metadata:
 import sys
 import subprocess
 import time
+import tarfile
 import requests
 import threading
 
@@ -258,30 +259,69 @@ class Model:
         self._process = None
 
     def load(self):
-        # 1. Locate the packaged binary. All artifacts (llama-server, every .so
-        #    plugin/library, and the bundled Nix ELF loader) live co-located in a
-        #    single self-contained directory (model/bin).
         model_dir = os.path.dirname(__file__)
-        candidate_bins = [
-            os.path.join(model_dir, "bin", "llama-server"),
-            "/app/model/bin/llama-server",
-            os.path.join(model_dir, "llama-server"),
+
+        # 1. The runtime (llama-server, every .so plugin/library, and the Nix ELF
+        #    loader) ships as a single opaque tar inside the Truss archive. Baseten's
+        #    build-context step rewrites loose directories -- it dereferences some
+        #    symlinks, silently drops symlink->symlink chains, and drops other files
+        #    -- so a bare directory of Nix artifacts arrives incomplete. A single
+        #    regular file has no internal structure for Baseten to rewrite, so we
+        #    ship the tar and extract it here with full fidelity (symlinks intact).
+        candidate_tars = [
+            os.path.join(model_dir, "runtime.tar.gz"),
+            "/app/model/runtime.tar.gz",
         ]
+        tar_path = next((t for t in candidate_tars if os.path.isfile(t)), None)
+        if not tar_path:
+            raise FileNotFoundError(f"Could not locate runtime tar in: {candidate_tars}")
 
-        bin_path = next((cb for cb in candidate_bins if os.path.isfile(cb)), None)
-        if not bin_path:
-            raise FileNotFoundError(f"Could not locate llama-server binary in: {candidate_bins}")
+        runtime_root = os.path.join(model_dir, "runtime")
+        runtime_dir = os.path.join(runtime_root, "bin")
+        bin_path = os.path.join(runtime_dir, "llama-server")
 
+        # Extract once; idempotent across Truss's load() retries.
+        if not os.path.isfile(bin_path):
+            print(f"Extracting runtime bundle {tar_path} -> {runtime_root} ...")
+            os.makedirs(runtime_root, exist_ok=True)
+            with tarfile.open(tar_path, "r:gz") as tf:
+                tf.extractall(runtime_root)
+            print("Extraction complete.")
+        else:
+            print(f"Runtime already extracted at {runtime_dir}")
+
+        if not os.path.isfile(bin_path):
+            raise FileNotFoundError(f"llama-server missing after extraction: {bin_path}")
         print(f"Found llama-server at: {bin_path}")
 
-        # Ensure binary is executable
-        try:
-            os.chmod(bin_path, 0o755)
-        except Exception as e:
-            print(f"Warning: Failed to set executable permissions on binary: {e}", file=sys.stderr)
+        # Ensure the binary and other executables are runnable.
+        for exe in ("llama-server", "ld-linux-x86-64.so.2", "python3", "python"):
+            p = os.path.join(runtime_dir, exe)
+            if os.path.isfile(p):
+                try:
+                    os.chmod(p, 0o755)
+                except Exception as e:
+                    print(f"Warning: chmod {p}: {e}", file=sys.stderr)
 
-        # 2. Everything is co-located with the binary.
-        runtime_dir = os.path.dirname(bin_path)
+        # Diagnostic: report exactly what landed in runtime_dir after extraction,
+        # so any fidelity loss (missing files, unresolved symlinks) is visible.
+        try:
+            entries = sorted(os.listdir(runtime_dir))
+            total = 0
+            print(f"Contents of {runtime_dir} ({len(entries)} entries):")
+            for name in entries:
+                p = os.path.join(runtime_dir, name)
+                if os.path.islink(p):
+                    print(f"  {name} -> {os.readlink(p)} (resolves={os.path.exists(p)})")
+                elif os.path.isfile(p):
+                    sz = os.path.getsize(p)
+                    total += sz
+                    print(f"  {name} ({sz} bytes)")
+                else:
+                    print(f"  {name} (dir/other)")
+            print(f"Total real-file bytes in {runtime_dir}: {total}")
+        except Exception as e:
+            print(f"Warning: could not list {runtime_dir}: {e}", file=sys.stderr)
 
         # Locate the bundled Nix loader (co-located), falling back to host loaders.
         loader_path = os.path.join(runtime_dir, "ld-linux-x86-64.so.2")
@@ -444,7 +484,9 @@ class Model:
         # Create Truss structure
         model_dir = os.path.join(temp_dir, "model")
         os.makedirs(model_dir, exist_ok=True)
-        bin_dir = os.path.join(model_dir, "bin")
+        # bin/ is staged OUTSIDE model/ (Baseten never sees it as loose files); it is
+        # packed into model/runtime.tar.gz below and extracted at runtime by model.py.
+        bin_dir = os.path.join(temp_dir, "stage", "bin")
         os.makedirs(bin_dir, exist_ok=True)
 
         config_path = os.path.join(temp_dir, "config.yaml")
@@ -489,17 +531,42 @@ class Model:
             elif os.path.isdir(src_path):
                 shutil.copytree(src_path, dest_path, symlinks=True, dirs_exist_ok=True)
 
-        # Copy llama-server, every backend plugin, all shared libraries, and the
-        # bundled Nix ELF loader into a single self-contained directory (model/bin).
-        # Keeping everything co-located means the loader, the binary, and every
-        # libggml-*.so plugin share one directory, so /proc/self/exe-based plugin
-        # discovery and $ORIGIN-relative library resolution both resolve there.
-        print("Copying binaries and shared libraries into model/bin...")
+        # Stage llama-server, every backend plugin, all shared libraries, and the
+        # bundled Nix ELF loader into a single self-contained directory. Everything
+        # is co-located so the loader, the binary, and every libggml-*.so plugin
+        # share one directory, so /proc/self/exe-based plugin discovery and
+        # $ORIGIN-relative library resolution both resolve there at runtime.
+        print("Staging binaries and shared libraries...")
         for slim_sub in ["bin", "lib", "lib64"]:
             src_dir = os.path.join(slim_path, slim_sub)
             if os.path.isdir(src_dir):
                 for item in os.listdir(src_dir):
                     copy_file_smart(os.path.join(src_dir, item), os.path.join(bin_dir, item))
+
+        # Verify the staged bundle is complete before packing. Every load-time
+        # dependency of llama-server must resolve; fail fast locally instead of after
+        # a multi-minute Baseten build.
+        required = ["llama-server", "libllama-server-impl.so", "libggml-cuda.so", "ld-linux-x86-64.so.2"]
+        missing = [r for r in required if not os.path.isfile(os.path.join(bin_dir, r))]
+        if missing:
+            print(f"Error: staged bundle incomplete; unresolvable in bin/: {missing}", file=sys.stderr)
+            sys.exit(1)
+        entries = os.listdir(bin_dir)
+        real_bytes = sum(
+            os.path.getsize(os.path.join(bin_dir, f))
+            for f in entries
+            if os.path.isfile(os.path.join(bin_dir, f)) and not os.path.islink(os.path.join(bin_dir, f))
+        )
+        print(f"Staged bin/: {len(entries)} entries, {real_bytes / 1e9:.2f} GB of real files")
+
+        # Pack the staged directory into a single opaque tar inside model/. Baseten's
+        # build-context step rewrites loose directories (dereferencing/dropping
+        # symlinks and files); a single regular file survives byte-for-byte.
+        runtime_tar = os.path.join(model_dir, "runtime.tar.gz")
+        print(f"Packing runtime bundle into {os.path.basename(runtime_tar)} ...")
+        with tarfile.open(runtime_tar, "w:gz") as rt:
+            rt.add(bin_dir, arcname="bin")
+        print(f"Runtime bundle size: {os.path.getsize(runtime_tar) / 1e9:.2f} GB")
 
         # Package the model archive
         archive_path = os.path.join(temp_dir, "model.tgz")
