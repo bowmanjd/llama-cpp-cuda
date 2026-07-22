@@ -9,17 +9,17 @@ ELF loader) is bundled into a single self-contained directory and launched via t
 bundled loader to insulate it from the host glibc.
 """
 
-import os
-import sys
-import json
 import argparse
-import tempfile
-import tarfile
-import time
-import urllib.request
-import urllib.error
-import subprocess
+import json
+import os
 import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.request
 
 # Ensure boto3 is installed
 try:
@@ -38,42 +38,41 @@ def parse_arguments(cuda_versions, default_cuda):
         "--cuda-version",
         choices=cuda_versions,
         default=default_cuda,
-        help=f"Target CUDA version (available: {', '.join(cuda_versions)}). Default: {default_cuda}"
+        help=f"Target CUDA version (available: {', '.join(cuda_versions)}). Default: {default_cuda}",
     )
     parser.add_argument(
         "--model-id",
         default="unsloth/gemma-4-31B-it-qat-GGUF:UD-Q4_K_XL",
-        help="Hugging Face GGUF model repository and file to download/serve."
+        help="Hugging Face GGUF model repository and file to download/serve.",
     )
     parser.add_argument(
         "--accelerator",
         default=None,
-        help="GPU Accelerator type (e.g., A100, A10G, L4, H100). Default: A100"
+        help="GPU Accelerator type (e.g., A100, A10G, L4, H100).",
     )
     parser.add_argument(
         "--instance-type",
+        # default="A10Gx4x16",
         default="A10G:2x24x96",
-        help="Specific Baseten instance type SKU (e.g. 'A10G:2x24x96', 'A10G:4x48x192', 'A100:12x144'). Overrides accelerator/cpu/memory if set."
+        help="Specific Baseten instance type SKU (e.g. 'A10G:2x24x96', 'A10G:4x48x192', 'A100:12x144'). Overrides accelerator/cpu/memory if set.",
     )
     parser.add_argument(
-        "--cpu",
-        default=None,
-        help="Optional CPU allocation (e.g. '4', '8')."
+        "--cpu", default=None, help="Optional CPU allocation (e.g. '4', '8')."
     )
     parser.add_argument(
         "--memory",
         default=None,
-        help="Optional memory allocation (e.g. '16Gi', '32Gi')."
+        help="Optional memory allocation (e.g. '16Gi', '32Gi').",
     )
     parser.add_argument(
         "--model-name",
         default="llama-cpp",
-        help="Name of the model as registered on Baseten. Default: llama-cpp"
+        help="Name of the model as registered on Baseten. Default: llama-cpp",
     )
     parser.add_argument(
         "--skip-polling",
         action="store_true",
-        help="Skip polling for deployment to become ACTIVE and applying autoscaling."
+        help="Skip polling for deployment to become ACTIVE and applying autoscaling.",
     )
     return parser.parse_args()
 
@@ -81,7 +80,10 @@ def parse_arguments(cuda_versions, default_cuda):
 def load_config():
     config_path = "config.json"
     if not os.path.exists(config_path):
-        print(f"Error: Config file '{config_path}' not found in the current directory.", file=sys.stderr)
+        print(
+            f"Error: Config file '{config_path}' not found in the current directory.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:
@@ -128,7 +130,10 @@ def get_available_instance_types(api_key):
         resp = make_request("https://api.baseten.co/v1/instance_types", headers=headers)
         return resp.get("instance_types", [])
     except Exception as e:
-        print(f"Warning: Could not fetch instance types from Baseten API: {e}", file=sys.stderr)
+        print(
+            f"Warning: Could not fetch instance types from Baseten API: {e}",
+            file=sys.stderr,
+        )
         return []
 
 
@@ -140,7 +145,10 @@ def main():
     cuda_versions = list(cuda_versions_dict.keys())
 
     if not llama_cpp_tag or not cuda_versions:
-        print("Error: config.json is missing required fields ('llamaCppTag' or 'cudaVersions').", file=sys.stderr)
+        print(
+            "Error: config.json is missing required fields ('llamaCppTag' or 'cudaVersions').",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     default_cuda = "13.0" if "13.0" in cuda_versions else cuda_versions[0]
@@ -150,24 +158,34 @@ def main():
 
     baseten_api_key = os.environ.get("BASETEN_API_KEY")
     if not baseten_api_key:
-        print("Error: BASETEN_API_KEY environment variable is not set.", file=sys.stderr)
+        print(
+            "Error: BASETEN_API_KEY environment variable is not set.", file=sys.stderr
+        )
         sys.exit(1)
 
     # Validate requested GPU instance type against Baseten account capabilities
     available_instances = get_available_instance_types(baseten_api_key)
     if available_instances:
-        gpu_types = set(it.get("gpu_type") for it in available_instances if it.get("gpu_type"))
+        gpu_types = set(
+            it.get("gpu_type") for it in available_instances if it.get("gpu_type")
+        )
         instance_ids = set(it.get("id") for it in available_instances)
 
         target = args.instance_type or args.accelerator
         if target not in instance_ids and target not in gpu_types:
-            print(f"Info: Requested accelerator/instance '{target}' is not listed in standard GET /v1/instance_types pool.", file=sys.stderr)
-            print("Standard API GPU types for this key: " + ", ".join(sorted(gpu_types)), file=sys.stderr)
-
-
+            print(
+                f"Info: Requested accelerator/instance '{target}' is not listed in standard GET /v1/instance_types pool.",
+                file=sys.stderr,
+            )
+            print(
+                "Standard API GPU types for this key: " + ", ".join(sorted(gpu_types)),
+                file=sys.stderr,
+            )
 
     # Resolve dynamic container tag
-    image_tag = f"ghcr.io/bowmanjd/llama-cpp-cuda:{llama_cpp_tag}-cuda{args.cuda_version}"
+    image_tag = (
+        f"ghcr.io/bowmanjd/llama-cpp-cuda:{llama_cpp_tag}-cuda{args.cuda_version}"
+    )
     print(f"Targeting container tag: {image_tag}")
     print(f"Model ID:                {args.model_id}")
     if args.instance_type:
@@ -189,7 +207,7 @@ def main():
             ["nix", "build", nix_attr, "--print-out-paths", "--no-link"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         slim_path = res.stdout.strip()
         print(f"Nix slim package path: {slim_path}")
@@ -217,16 +235,8 @@ def main():
     config_dict = {
         "model_name": args.model_name,
         "resources": resources_dict,
-        "requirements": [
-            "requests",
-            "urllib3"
-        ],
-        "model_metadata": {
-            "model_id": args.model_id,
-            "tags": [
-                "openai-compatible"
-            ]
-        }
+        "requirements": ["requests", "urllib3"],
+        "model_metadata": {"model_id": args.model_id, "tags": ["openai-compatible"]},
     }
 
     resources_yaml_str = "\n".join(resources_yaml_lines)
@@ -241,8 +251,6 @@ model_metadata:
   tags:
     - openai-compatible
 """
-
-
 
     model_py_content = """import os
 import sys
@@ -405,9 +413,11 @@ class Model:
             "--port", "8000",
             "--jinja",
             "-fa", "on",
-            "-fitt", "0",
+            # "-fitt", "0",
+			# "-ctk", "q8_0",
+			# "-ctv", "q8_0",
             "--spec-type", "draft-mtp",
-            "-ngl", "999",
+            # "-ngl", "999",
             "-hf", model_id,
         ]
 
@@ -541,23 +551,36 @@ class Model:
             src_dir = os.path.join(slim_path, slim_sub)
             if os.path.isdir(src_dir):
                 for item in os.listdir(src_dir):
-                    copy_file_smart(os.path.join(src_dir, item), os.path.join(bin_dir, item))
+                    copy_file_smart(
+                        os.path.join(src_dir, item), os.path.join(bin_dir, item)
+                    )
 
         # Verify the staged bundle is complete before packing. Every load-time
         # dependency of llama-server must resolve; fail fast locally instead of after
         # a multi-minute Baseten build.
-        required = ["llama-server", "libllama-server-impl.so", "libggml-cuda.so", "ld-linux-x86-64.so.2"]
+        required = [
+            "llama-server",
+            "libllama-server-impl.so",
+            "libggml-cuda.so",
+            "ld-linux-x86-64.so.2",
+        ]
         missing = [r for r in required if not os.path.isfile(os.path.join(bin_dir, r))]
         if missing:
-            print(f"Error: staged bundle incomplete; unresolvable in bin/: {missing}", file=sys.stderr)
+            print(
+                f"Error: staged bundle incomplete; unresolvable in bin/: {missing}",
+                file=sys.stderr,
+            )
             sys.exit(1)
         entries = os.listdir(bin_dir)
         real_bytes = sum(
             os.path.getsize(os.path.join(bin_dir, f))
             for f in entries
-            if os.path.isfile(os.path.join(bin_dir, f)) and not os.path.islink(os.path.join(bin_dir, f))
+            if os.path.isfile(os.path.join(bin_dir, f))
+            and not os.path.islink(os.path.join(bin_dir, f))
         )
-        print(f"Staged bin/: {len(entries)} entries, {real_bytes / 1e9:.2f} GB of real files")
+        print(
+            f"Staged bin/: {len(entries)} entries, {real_bytes / 1e9:.2f} GB of real files"
+        )
 
         # Pack the staged directory into a single opaque tar inside model/. Baseten's
         # build-context step rewrites loose directories (dereferencing/dropping
@@ -578,14 +601,12 @@ class Model:
         # 6. Call Baseten REST API - Prepare Model Upload
         headers = {
             "Authorization": f"Bearer {baseten_api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         prepare_payload = {
             "name": args.model_name,
-            "deployment": {
-                "config": config_dict
-            }
+            "deployment": {"config": config_dict},
         }
 
         print("Preparing model upload with Baseten...")
@@ -593,7 +614,7 @@ class Model:
             "https://api.baseten.co/v1/prepare_model_upload",
             method="POST",
             headers=headers,
-            data=prepare_payload
+            data=prepare_payload,
         )
 
         creds = prepare_resp["creds"]
@@ -619,9 +640,7 @@ class Model:
                 "kind": "model_archive",
                 "name": args.model_name,
                 "s3_key": s3_key,
-                "deployment": {
-                    "config": config_dict
-                }
+                "deployment": {"config": config_dict},
             }
         }
 
@@ -630,12 +649,14 @@ class Model:
             "https://api.baseten.co/v1/models",
             method="POST",
             headers=headers,
-            data=create_payload
+            data=create_payload,
         )
 
         model_id = create_resp["model"]["id"]
         deployment_id = create_resp["deployment"]["id"]
-        print(f"Model successfully committed! Model ID: {model_id}, Deployment ID: {deployment_id}")
+        print(
+            f"Model successfully committed! Model ID: {model_id}, Deployment ID: {deployment_id}"
+        )
 
     if args.skip_polling:
         print("Skipping polling step as requested.")
@@ -646,12 +667,18 @@ class Model:
     start_time = time.time()
 
     while True:
-        status_url = f"https://api.baseten.co/v1/models/{model_id}/deployments/{deployment_id}"
+        status_url = (
+            f"https://api.baseten.co/v1/models/{model_id}/deployments/{deployment_id}"
+        )
         try:
-            status_resp = make_request(status_url, headers={"Authorization": f"Bearer {baseten_api_key}"})
+            status_resp = make_request(
+                status_url, headers={"Authorization": f"Bearer {baseten_api_key}"}
+            )
             status = status_resp.get("status")
         except Exception as e:
-            print(f"\nWarning: Failed to fetch status: {e}. Retrying...", file=sys.stderr)
+            print(
+                f"\nWarning: Failed to fetch status: {e}. Retrying...", file=sys.stderr
+            )
             time.sleep(15)
             continue
 
@@ -671,18 +698,11 @@ class Model:
     # 9. Apply Autoscaling settings (Scale-to-Zero)
     print("Applying autoscaling settings (scale-to-zero)...")
     autoscaling_url = f"https://api.baseten.co/v1/models/{model_id}/deployments/{deployment_id}/autoscaling_settings"
-    autoscaling_payload = {
-        "min_replica": 0,
-        "max_replica": 4,
-        "scale_down_delay": 900
-    }
+    autoscaling_payload = {"min_replica": 0, "max_replica": 4, "scale_down_delay": 900}
 
     try:
         autoscaling_resp = make_request(
-            autoscaling_url,
-            method="PATCH",
-            headers=headers,
-            data=autoscaling_payload
+            autoscaling_url, method="PATCH", headers=headers, data=autoscaling_payload
         )
         print("Autoscaling settings updated successfully:")
         print(json.dumps(autoscaling_resp, indent=2))
